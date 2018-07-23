@@ -2463,6 +2463,8 @@ public class Felix extends BundleImpl implements Framework
                 boolean locked = acquireGlobalLock();
                 // If we did not get the global lock, then do not try to
                 // auto-refresh.
+                // FIXME 
+                System.out.println("  YY Felix bundle refresh... lock acquired: " + locked + ": extension: " + bundle.isExtension() + ": " + bundle);
                 if (locked)
                 {
                     try
@@ -2472,6 +2474,8 @@ public class Felix extends BundleImpl implements Framework
                         {
                             try
                             {
+                            	// FIXME 
+                                System.out.println("  YY refreshing bundles for " + bundle);
                                 List<Bundle> list = new ArrayList<Bundle>(1);
                                 list.add(bundle);
                                 refreshPackages(list, null);
@@ -4293,6 +4297,11 @@ public class Felix extends BundleImpl implements Framework
                 }
                 else
                 {
+                	// FIXME
+                	System.out.println("!!!!!!");
+                	System.out.println("Package refresh causes framework restart!; bundles: " + bundles);
+                	System.out.println("!!!!!!");
+                	Thread.dumpStack();
                     try
                     {
                         update();

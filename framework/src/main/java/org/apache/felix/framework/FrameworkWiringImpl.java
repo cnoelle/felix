@@ -91,6 +91,8 @@ class FrameworkWiringImpl implements FrameworkWiring, Runnable
 
     public void refreshBundles(Collection<Bundle> bundles, FrameworkListener... listeners)
     {
+    	// FIXME
+    	System.out.println("    III Felix FrameworkWiringImpl refresh for " + bundles);
         Object sm = System.getSecurityManager();
 
         if (sm != null)
@@ -179,6 +181,8 @@ class FrameworkWiringImpl implements FrameworkWiring, Runnable
                 // Get the bundles parameter for the current refresh request.
                 bundles = m_requests.get(0);
                 listeners = m_requestListeners.get(0);
+                // FIXME
+                System.out.println("     ^^^ FrameworkWiringLoop found refresh requests... " + bundles);
             }
 
             // Perform refresh.
