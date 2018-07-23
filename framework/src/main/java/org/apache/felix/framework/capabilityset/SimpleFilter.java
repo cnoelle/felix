@@ -18,11 +18,13 @@
  */
 package org.apache.felix.framework.capabilityset;
 
+import org.osgi.framework.Version;
+import org.osgi.framework.VersionRange;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import org.apache.felix.framework.util.VersionRange;
 
 public class SimpleFilter
 {
@@ -104,7 +106,7 @@ public class SimpleFilter
 
     private static String toString(List list)
     {
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         for (int i = 0; i < list.size(); i++)
         {
             sb.append(list.get(i).toString());
@@ -114,7 +116,7 @@ public class SimpleFilter
 
     private static String toDecodedString(String s, int startIdx, int endIdx)
     {
-        StringBuffer sb = new StringBuffer(endIdx - startIdx);
+        StringBuilder sb = new StringBuilder(endIdx - startIdx);
         boolean escaped = false;
         for (int i = 0; i < (endIdx - startIdx); i++)
         {
@@ -138,7 +140,7 @@ public class SimpleFilter
         if (o instanceof String)
         {
             String s = (String) o;
-            StringBuffer sb = new StringBuffer();
+            StringBuilder sb = new StringBuilder();
             for (int i = 0; i < s.length(); i++)
             {
                 char c = s.charAt(i);
@@ -368,7 +370,7 @@ public class SimpleFilter
     public static List<String> parseSubstring(String value)
     {
         List<String> pieces = new ArrayList();
-        StringBuffer ss = new StringBuffer();
+        StringBuilder ss = new StringBuilder();
         // int kind = SIMPLE; // assume until proven otherwise
         boolean wasStar = false; // indicates last piece was a star
         boolean leftstar = false; // track if the initial piece is a star
@@ -449,7 +451,7 @@ loop:   for (;;)
 
     public static String unparseSubstring(List<String> pieces)
     {
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         for (int i = 0; i < pieces.size(); i++)
         {
             if (i > 0)
@@ -565,12 +567,12 @@ loop:   for (int i = 0; i < len; i++)
             if (entry.getValue() instanceof VersionRange)
             {
                 VersionRange vr = (VersionRange) entry.getValue();
-                if (vr.isFloorInclusive())
+                if (vr.getLeftType() == VersionRange.LEFT_CLOSED)
                 {
                     filters.add(
                         new SimpleFilter(
                             entry.getKey(),
-                            vr.getFloor().toString(),
+                            vr.getLeft().toString(),
                             SimpleFilter.GTE));
                 }
                 else
@@ -580,19 +582,19 @@ loop:   for (int i = 0; i < len; i++)
                     ((List) not.getValue()).add(
                         new SimpleFilter(
                             entry.getKey(),
-                            vr.getFloor().toString(),
+                            vr.getLeft().toString(),
                             SimpleFilter.LTE));
                     filters.add(not);
                 }
 
-                if (vr.getCeiling() != null)
+                if (vr.getRight() != null)
                 {
-                    if (vr.isCeilingInclusive())
+                    if (vr.getRightType() == VersionRange.RIGHT_CLOSED)
                     {
                         filters.add(
                             new SimpleFilter(
                                 entry.getKey(),
-                                vr.getCeiling().toString(),
+                                vr.getRight().toString(),
                                 SimpleFilter.LTE));
                     }
                     else
@@ -602,7 +604,7 @@ loop:   for (int i = 0; i < len; i++)
                         ((List) not.getValue()).add(
                             new SimpleFilter(
                                 entry.getKey(),
-                                vr.getCeiling().toString(),
+                                vr.getRight().toString(),
                                 SimpleFilter.GTE));
                         filters.add(not);
                     }

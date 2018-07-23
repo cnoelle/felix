@@ -24,9 +24,7 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.net.URLStreamHandlerFactory;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -36,6 +34,7 @@ import static org.apache.felix.framework.util.Util.putIfAbsentAndReturn;
 import org.apache.felix.framework.util.FelixConstants;
 import org.apache.felix.framework.util.SecureAction;
 import org.apache.felix.framework.util.SecurityManagerEx;
+import org.osgi.framework.Constants;
 import org.osgi.service.url.URLStreamHandlerService;
 
 /**
@@ -93,12 +92,12 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
     private final static ConcurrentHashMap<ClassLoader, List<Object>> m_classloaderToFrameworkLists = new ConcurrentHashMap<ClassLoader, List<Object>>();
 
     // The list to hold all enabled frameworks registered with this handlers
-    private static final CopyOnWriteArrayList m_frameworks = new CopyOnWriteArrayList();
+    private static final CopyOnWriteArrayList<Felix> m_frameworks = new CopyOnWriteArrayList<Felix>();
     private static volatile int m_counter = 0;
 
     private static final ConcurrentHashMap<String, ContentHandler> m_contentHandlerCache = new ConcurrentHashMap<String, ContentHandler>();
     private static final ConcurrentHashMap<String, URLStreamHandler> m_streamHandlerCache = new ConcurrentHashMap<String, URLStreamHandler>();
-    private static final ConcurrentHashMap<URLStreamHandler, URL> m_handlerToURL = new ConcurrentHashMap<URLStreamHandler, URL>();
+    private static final ConcurrentHashMap<String, URL> m_protocolToURL = new ConcurrentHashMap<String, URL>();
 
     private static volatile URLStreamHandlerFactory m_streamHandlerFactory;
     private static volatile ContentHandlerFactory m_contentHandlerFactory;
@@ -128,7 +127,7 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
             if (handler != null)
             {
                 URL url = new URL(protocol, null, -1, "", handler);
-                addToCache(m_handlerToURL, handler, url);
+                addToCache(m_protocolToURL, protocol, url);
             }
         }
         catch (Throwable ex)
@@ -287,7 +286,7 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
             m_streamHandlerFactory.getClass().getName())))
         {
             m_sm = null;
-            m_handlerToURL.clear();
+            m_protocolToURL.clear();
             m_builtIn.clear();
         }
     }
@@ -479,8 +478,7 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
         // allowed to deal with it.
         if (protocol.equals(FelixConstants.BUNDLE_URL_PROTOCOL))
         {
-            return addToCache(m_streamHandlerCache, protocol,
-                new URLHandlersBundleStreamHandler(m_secureAction));
+            return new URLHandlersBundleStreamHandler(getFrameworkFromContext(), m_secureAction);
         }
 
         handler = getBuiltInStreamHandler(protocol,
@@ -489,7 +487,7 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
         // If built-in content handler, then create a proxy handler.
         return addToCache(m_streamHandlerCache, protocol,
             new URLHandlersStreamHandlerProxy(protocol, m_secureAction,
-                handler, getFromCache(m_handlerToURL,handler)));
+                handler, getFromCache(m_protocolToURL, protocol)));
     }
 
     /**
@@ -542,7 +540,7 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
      * @param enable a flag indicating whether or not the framework wants to
      *        enable the URL Handlers service.
     **/
-    public static void registerFrameworkInstance(Object framework, boolean enable)
+    public static void registerFrameworkInstance(Felix framework, boolean enable)
     {
         boolean register = false;
         synchronized (m_frameworks)
@@ -741,5 +739,43 @@ class URLHandlers implements URLStreamHandlerFactory, ContentHandlerFactory
             }
         }
         return null;
+    }
+
+    public static Object getFrameworkFromContext(String uuid)
+    {
+        if (uuid != null)
+        {
+            for (Felix framework : m_frameworks)
+            {
+                if (uuid.equals(framework._getProperty(Constants.FRAMEWORK_UUID)))
+                {
+                    return framework;
+                }
+            }
+            for (List frameworks : m_classloaderToFrameworkLists.values())
+            {
+                for (Object framework : frameworks)
+                {
+                    try
+                    {
+                        if (uuid.equals(
+                                m_secureAction.invoke(
+                                        m_secureAction.getDeclaredMethod(framework.getClass(),"getProperty", new Class[]{String.class}),
+                                        framework, new Object[]{Constants.FRAMEWORK_UUID})))
+                        {
+                            return framework;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // This should not happen but if it does there is
+                        // not much we can do other then ignore it.
+                        // Maybe log this or something.
+                        ex.printStackTrace();
+                    }
+                }
+            }
+        }
+        return getFrameworkFromContext();
     }
 }

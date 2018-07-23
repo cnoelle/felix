@@ -18,15 +18,22 @@
  */
 package org.apache.felix.framework.cache;
 
-import java.io.*;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.util.*;
 import org.apache.felix.framework.Logger;
 import org.apache.felix.framework.util.FelixConstants;
 import org.apache.felix.framework.util.Util;
 import org.apache.felix.framework.util.WeakZipFileFactory;
 import org.osgi.framework.Constants;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Properties;
 
 public class DirectoryContent implements Content
 {
@@ -51,6 +58,11 @@ public class DirectoryContent implements Content
         m_revisionLock = revisionLock;
         m_rootDir = rootDir;
         m_dir = dir;
+    }
+
+    public File getFile()
+    {
+        return m_dir;
     }
 
     public void close()
@@ -91,43 +103,19 @@ public class DirectoryContent implements Content
         }
 
         // Get the embedded resource.
-        InputStream is = null;
-        ByteArrayOutputStream baos = null;
 
+        File file = new File(m_dir, name);
         try
         {
-            is = new BufferedInputStream(
-                BundleCache.getSecureAction().getFileInputStream(new File(m_dir, name)));
-            baos = new ByteArrayOutputStream(BUFSIZE);
-            byte[] buf = new byte[BUFSIZE];
-            int n = 0;
-            while ((n = is.read(buf, 0, buf.length)) >= 0)
-            {
-                baos.write(buf, 0, n);
-            }
-            return baos.toByteArray();
 
+            return BundleCache.getSecureAction().fileExists(file) ? BundleCache.read(BundleCache.getSecureAction().getFileInputStream(file), file.length()) : null;
         }
         catch (Exception ex)
         {
+            m_logger.log(
+                Logger.LOG_ERROR,
+                "DirectoryContent: Unable to read bytes for file " + name + " from file " + file.getAbsolutePath(), ex);
             return null;
-        }
-        finally
-        {
-            try
-            {
-                if (baos != null) baos.close();
-            }
-            catch (Exception ex)
-            {
-            }
-            try
-            {
-                if (is != null) is.close();
-            }
-            catch (Exception ex)
-            {
-            }
         }
     }
 
@@ -139,7 +127,18 @@ public class DirectoryContent implements Content
             name = name.substring(1);
         }
 
-        return BundleCache.getSecureAction().getFileInputStream(new File(m_dir, name));
+        File file = new File(m_dir, name);
+        try
+        {
+            return BundleCache.getSecureAction().fileExists(file) ? BundleCache.getSecureAction().getFileInputStream(file) : null;
+        }
+        catch (Exception ex)
+        {
+            m_logger.log(
+                Logger.LOG_ERROR,
+                "DirectoryContent: Unable to create inputstream for file " + name + " from file " + file.getAbsolutePath(), ex);
+            return null;
+        }
     }
 
     public URL getEntryAsURL(String name)
@@ -149,11 +148,18 @@ public class DirectoryContent implements Content
             name = name.substring(1);
         }
 
-        try
+        if (hasEntry(name))
         {
-            return BundleCache.getSecureAction().toURI(new File(m_dir, name)).toURL();
+            try
+            {
+                return BundleCache.getSecureAction().toURI(new File(m_dir, name)).toURL();
+            }
+            catch (MalformedURLException e)
+            {
+                return null;
+            }
         }
-        catch (MalformedURLException e)
+        else
         {
             return null;
         }
@@ -172,6 +178,14 @@ public class DirectoryContent implements Content
         // Remove any leading slash, since all bundle class path
         // entries are relative to the root of the bundle.
         entryName = (entryName.startsWith("/")) ? entryName.substring(1) : entryName;
+
+        if (entryName.trim().startsWith(".." + File.separatorChar) ||
+            entryName.contains(File.separator + ".." + File.separatorChar) ||
+            entryName.trim().endsWith(File.separator + "..") ||
+            entryName.trim().equals(".."))
+        {
+            return null;
+        }
 
         // Any embedded JAR files will be extracted to the embedded directory.
         File embedDir = new File(m_rootDir, m_dir.getName() + EMBEDDED_DIRECTORY);
@@ -192,18 +206,7 @@ public class DirectoryContent implements Content
                 (entryName.lastIndexOf('/') >= 0)
                     ? entryName.substring(0, entryName.lastIndexOf('/'))
                     : entryName);
-            synchronized (m_revisionLock)
-            {
-                if (!BundleCache.getSecureAction().fileExists(extractDir))
-                {
-                    if (!BundleCache.getSecureAction().mkdirs(extractDir))
-                    {
-                        m_logger.log(
-                            Logger.LOG_ERROR,
-                            "Unable to extract embedded directory.");
-                    }
-                }
-            }
+
             return new JarContent(
                 m_logger, m_configMap, m_zipFactory, m_revisionLock,
                 extractDir, file, null);
@@ -222,6 +225,14 @@ public class DirectoryContent implements Content
         // Remove any leading slash, since all bundle class path
         // entries are relative to the root of the bundle.
         entryName = (entryName.startsWith("/")) ? entryName.substring(1) : entryName;
+
+        if (entryName.trim().startsWith(".." + File.separatorChar) ||
+            entryName.contains(File.separator + ".." + File.separatorChar) ||
+            entryName.trim().endsWith(File.separator + "..") ||
+            entryName.trim().equals(".."))
+        {
+            return null;
+        }
 
         // Any embedded native library files will be extracted to the lib directory.
         File libDir = new File(m_rootDir, m_dir.getName() + LIBRARY_DIRECTORY);
@@ -267,13 +278,7 @@ public class DirectoryContent implements Content
 
                         try
                         {
-                            is = new BufferedInputStream(
-                                BundleCache.getSecureAction().getFileInputStream(entryFile),
-                                BundleCache.BUFSIZE);
-                            if (is == null)
-                            {
-                                throw new IOException("No input stream: " + entryName);
-                            }
+                            is = BundleCache.getSecureAction().getFileInputStream(entryFile);
 
                             // Create the file.
                             BundleCache.copyStreamToFile(is, libFile);
@@ -299,17 +304,6 @@ public class DirectoryContent implements Content
                             m_logger.log(
                                 Logger.LOG_ERROR,
                                 "Extracting native library.", ex);
-                        }
-                        finally
-                        {
-                            try
-                            {
-                                if (is != null) is.close();
-                            }
-                            catch (IOException ex)
-                            {
-                                // Not much we can do.
-                            }
                         }
                     }
                 }
@@ -359,7 +353,7 @@ public class DirectoryContent implements Content
 
             // Remove the leading path of the reference directory, since the
             // entry paths are supposed to be relative to the root.
-            StringBuffer sb = new StringBuffer(abs);
+            StringBuilder sb = new StringBuilder(abs);
             sb.delete(0, BundleCache.getSecureAction().getAbsolutePath(m_dir).length() + 1);
             // Add a '/' to the end of directory entries.
             if (BundleCache.getSecureAction().isFileDirectory(m_children[m_counter]))
@@ -374,18 +368,21 @@ public class DirectoryContent implements Content
         {
             File[] children = BundleCache.getSecureAction().listDirectory(dir);
             File[] combined = children;
-            for (int i = 0; i < children.length; i++)
+            if (children != null)
             {
-                if (BundleCache.getSecureAction().isFileDirectory(children[i]))
+                for (int i = 0; i < children.length; i++)
                 {
-                    File[] grandchildren = listFilesRecursive(children[i]);
-                    if (grandchildren.length > 0)
+                    if (BundleCache.getSecureAction().isFileDirectory(children[i]))
                     {
-                        File[] tmp = new File[combined.length + grandchildren.length];
-                        System.arraycopy(combined, 0, tmp, 0, combined.length);
-                        System.arraycopy(
-                            grandchildren, 0, tmp, combined.length, grandchildren.length);
-                        combined = tmp;
+                        File[] grandchildren = listFilesRecursive(children[i]);
+                        if (grandchildren != null && grandchildren.length > 0)
+                        {
+                            File[] tmp = new File[combined.length + grandchildren.length];
+                            System.arraycopy(combined, 0, tmp, 0, combined.length);
+                            System.arraycopy(
+                                grandchildren, 0, tmp, combined.length, grandchildren.length);
+                            combined = tmp;
+                        }
                     }
                 }
             }

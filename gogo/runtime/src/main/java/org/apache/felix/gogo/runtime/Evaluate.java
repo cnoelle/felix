@@ -31,4 +31,6 @@ public interface Evaluate
     Object expr(Token t);
 
     Path currentDir();
+
+    ClassLoader classLoader();
 }

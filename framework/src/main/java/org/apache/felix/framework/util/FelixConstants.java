@@ -22,7 +22,7 @@ public interface FelixConstants extends org.osgi.framework.Constants
 {
     String SYSTEM_BUNDLE_SYMBOLICNAME = "org.apache.felix.framework";
     // Framework constants and values.
-    String FRAMEWORK_VERSION_VALUE = "1.8";
+    String FRAMEWORK_VERSION_VALUE = "1.9";
     String FRAMEWORK_VENDOR_VALUE = "Apache Software Foundation";
 
     // Framework constants and values.
@@ -55,6 +55,7 @@ public interface FelixConstants extends org.osgi.framework.Constants
     String NATIVE_PROC_NAME_ALIAS_PREFIX = "felix.native.processor.alias";
     String USE_CACHEDURLS_PROPS = "felix.bundlecodesource.usecachedurls";
     String RESOLVER_PARALLELISM = "felix.resolver.parallelism";
+    String USE_PROPERTY_SUBSTITUTION_IN_SYSTEMPACKAGES = "felix.systempackages.substitution";
 
     // Missing OSGi constant for resolution directive.
     String RESOLUTION_DYNAMIC = "dynamic";
@@ -70,4 +71,6 @@ public interface FelixConstants extends org.osgi.framework.Constants
     String FELIX_EXTENSION_ACTIVATOR = "Felix-Activator";
     String SECURITY_DEFAULT_POLICY = "felix.security.defaultpolicy";
     String FELIX_EXTENSIONS_DISABLE = "felix.extensions.disable";
+    String FRAMEWORK_UUID_SECURE = "felix.uuid.secure";
+    String CALCULATE_SYSTEMPACKAGES_USES = "felix.systempackages.calculate.uses";
 }

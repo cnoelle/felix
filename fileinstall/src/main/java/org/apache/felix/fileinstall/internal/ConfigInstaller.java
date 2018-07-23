@@ -42,6 +42,7 @@ public class ConfigInstaller implements ArtifactInstaller, ConfigurationListener
     private final BundleContext context;
     private final ConfigurationAdmin configAdmin;
     private final FileInstall fileInstall;
+    private final Map<String, String> pidToFile = new HashMap<>();
     private ServiceRegistration registration;
 
     ConfigInstaller(BundleContext context, ConfigurationAdmin configAdmin, FileInstall fileInstall)
@@ -60,6 +61,26 @@ public class ConfigInstaller implements ArtifactInstaller, ConfigurationListener
                     ArtifactInstaller.class.getName()
                 },
                 this, null);
+        try
+        {
+            Configuration[] configs = configAdmin.listConfigurations(null);
+            if (configs != null)
+            {
+                for (Configuration config : configs)
+                {
+                    Dictionary dict = config.getProperties();
+                    String fileName = dict != null ? (String) dict.get( DirectoryWatcher.FILENAME ) : null;
+                    if (fileName != null)
+                    {
+                        pidToFile.put(config.getPid(), fileName);
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Util.log( context, Logger.LOG_INFO, "Unable to initialize configurations list", e );
+        }
     }
 
     public void destroy()
@@ -127,9 +148,10 @@ public class ConfigInstaller implements ArtifactInstaller, ConfigurationListener
                                             configurationEvent.getPid(),
                                             "?");
                 Dictionary dict = config.getProperties();
-                String fileName = (String) dict.get( DirectoryWatcher.FILENAME );
+                String fileName = dict != null ? (String) dict.get( DirectoryWatcher.FILENAME ) : null;
                 File file = fileName != null ? fromConfigKey(fileName) : null;
-                if( file != null && file.isFile() ) {
+                if( file != null && file.isFile() && canHandle( file ) ) {
+                    pidToFile.put(config.getPid(), fileName);
                     TypedProperties props = new TypedProperties( bundleSubstitution() );
                     try (Reader r = new InputStreamReader(new FileInputStream(file), encoding()))
                     {
@@ -161,7 +183,10 @@ public class ConfigInstaller implements ArtifactInstaller, ConfigurationListener
                     {
                         props.remove(key);
                     }
-                    props.save( file );
+                    try (Writer fw = new OutputStreamWriter(new FileOutputStream(file), encoding()))
+                    {
+                        props.save( fw );
+                    }
                     // we're just writing out what's already loaded into ConfigAdmin, so
                     // update file checksum since lastModified gets updated when writing
                     fileInstall.updateChecksum(file);
@@ -176,11 +201,7 @@ public class ConfigInstaller implements ArtifactInstaller, ConfigurationListener
         if (configurationEvent.getType() == ConfigurationEvent.CM_DELETED)
         {
             try {
-                Configuration config = getConfigurationAdmin().getConfiguration(
-                        configurationEvent.getPid(),
-                        "?");
-                Dictionary dict = config.getProperties();
-                String fileName = (String) dict.get(DirectoryWatcher.FILENAME);
+                String fileName = pidToFile.remove(configurationEvent.getPid());
                 File file = fileName != null ? fromConfigKey(fileName) : null;
                 if (file != null && file.isFile()) {
                     if (!file.delete()) {

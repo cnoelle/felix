@@ -18,6 +18,24 @@
  */
 package org.apache.felix.framework.util.manifestparser;
 
+import org.apache.felix.framework.BundleRevisionImpl;
+import org.apache.felix.framework.Logger;
+import org.apache.felix.framework.capabilityset.SimpleFilter;
+import org.apache.felix.framework.util.FelixConstants;
+import org.apache.felix.framework.wiring.BundleCapabilityImpl;
+import org.apache.felix.framework.wiring.BundleRequirementImpl;
+import org.osgi.framework.BundleException;
+import org.osgi.framework.Constants;
+import org.osgi.framework.Version;
+import org.osgi.framework.VersionRange;
+import org.osgi.framework.namespace.BundleNamespace;
+import org.osgi.framework.namespace.ExecutionEnvironmentNamespace;
+import org.osgi.framework.namespace.IdentityNamespace;
+import org.osgi.framework.namespace.NativeNamespace;
+import org.osgi.framework.wiring.BundleCapability;
+import org.osgi.framework.wiring.BundleRequirement;
+import org.osgi.framework.wiring.BundleRevision;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -27,24 +45,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-
-import org.apache.felix.framework.BundleRevisionImpl;
-import org.apache.felix.framework.Logger;
-import org.apache.felix.framework.capabilityset.SimpleFilter;
-import org.apache.felix.framework.util.FelixConstants;
-import org.apache.felix.framework.util.VersionRange;
-import org.apache.felix.framework.wiring.BundleCapabilityImpl;
-import org.apache.felix.framework.wiring.BundleRequirementImpl;
-import org.osgi.framework.BundleException;
-import org.osgi.framework.Constants;
-import org.osgi.framework.Version;
-import org.osgi.framework.namespace.BundleNamespace;
-import org.osgi.framework.namespace.ExecutionEnvironmentNamespace;
-import org.osgi.framework.namespace.IdentityNamespace;
-import org.osgi.framework.namespace.NativeNamespace;
-import org.osgi.framework.wiring.BundleCapability;
-import org.osgi.framework.wiring.BundleRequirement;
-import org.osgi.framework.wiring.BundleRevision;
 
 public class ManifestParser
 {
@@ -157,6 +157,8 @@ public class ManifestParser
                 "R4 bundle manifests must include bundle symbolic name.");
         }
 
+        m_isExtension = checkExtensionBundle(headerMap);
+
         //
         // Parse Fragment-Host.
         //
@@ -222,7 +224,7 @@ public class ManifestParser
 
         List<ParsedHeaderClause> provideClauses =
             parseStandardHeader((String) headerMap.get(Constants.PROVIDE_CAPABILITY));
-        exportClauses = normalizeCapabilityClauses(
+        provideClauses = normalizeCapabilityClauses(
             logger, provideClauses, getManifestVersion());
         List<BundleCapability> provideCaps = convertProvideCapabilities(provideClauses, owner);
 
@@ -291,8 +293,6 @@ public class ManifestParser
         // This sets m_activationPolicy, m_includedPolicyClasses, and
         // m_excludedPolicyClasses.
         parseActivationPolicy(headerMap);
-
-        m_isExtension = checkExtensionBundle(headerMap);
     }
 
     private static List<ParsedHeaderClause> normalizeImportClauses(
@@ -326,7 +326,7 @@ public class ManifestParser
                 v = (v == null) ? sv : v;
                 clause.m_attrs.put(
                     Constants.VERSION_ATTRIBUTE,
-                    VersionRange.parse(v.toString()));
+                    new VersionRange(v.toString()));
             }
 
             // If bundle version is specified, then convert its type to VersionRange.
@@ -335,25 +335,20 @@ public class ManifestParser
             {
                 clause.m_attrs.put(
                     Constants.BUNDLE_VERSION_ATTRIBUTE,
-                    VersionRange.parse(v.toString()));
+                    new VersionRange(v.toString()));
             }
 
-            // Verify java.* is not imported, nor any duplicate imports.
+            // Verify no duplicate imports.
             for (String pkgName : clause.m_paths)
             {
                 if (!dupeSet.contains(pkgName))
                 {
-                    // Verify that java.* packages are not imported.
-                    if (pkgName.startsWith("java."))
-                    {
-                        throw new BundleException(
-                            "Importing java.* packages not allowed: " + pkgName);
-                    }
+
                     // The character "." has no meaning in the OSGi spec except
                     // when placed on the bundle class path. Some people, however,
                     // mistakenly think it means the default package when imported
                     // or exported. This is not correct. It is invalid.
-                    else if (pkgName.equals("."))
+                    if (pkgName.equals("."))
                     {
                         throw new BundleException("Imporing '.' is invalid.");
                     }
@@ -389,7 +384,7 @@ public class ManifestParser
                     // R3 package requirements should only have version attributes.
                     Object pkgVersion = clause.m_attrs.get(BundleCapabilityImpl.VERSION_ATTR);
                     pkgVersion = (pkgVersion == null)
-                        ? new VersionRange(Version.emptyVersion, true, null, true)
+                        ? new VersionRange(VersionRange.LEFT_CLOSED, Version.emptyVersion, null, VersionRange.RIGHT_CLOSED)
                         : pkgVersion;
                     for (Entry<String, Object> entry : clause.m_attrs.entrySet())
                     {
@@ -519,7 +514,7 @@ public class ManifestParser
                 v = (v == null) ? sv : v;
                 clause.m_attrs.put(
                     Constants.VERSION_ATTRIBUTE,
-                    VersionRange.parse(v.toString()));
+                    new VersionRange(v.toString()));
             }
 
             // If bundle version is specified, then convert its type to VersionRange.
@@ -528,19 +523,13 @@ public class ManifestParser
             {
                 clause.m_attrs.put(
                     Constants.BUNDLE_VERSION_ATTRIBUTE,
-                    VersionRange.parse(v.toString()));
+                    new VersionRange(v.toString()));
             }
 
-            // Dynamic imports can have duplicates, so verify that java.*
-            // packages are not imported.
+            // Dynamic imports can have duplicates, verify that no partial package name wild carding is used
             for (String pkgName : clause.m_paths)
             {
-                if (pkgName.startsWith("java."))
-                {
-                    throw new BundleException(
-                        "Dynamically importing java.* packages not allowed: " + pkgName);
-                }
-                else if (!pkgName.equals("*") && pkgName.endsWith("*") && !pkgName.endsWith(".*"))
+                if (!pkgName.equals("*") && pkgName.endsWith("*") && !pkgName.endsWith(".*"))
                 {
                     throw new BundleException(
                         "Partial package name wild carding is not allowed: " + pkgName);
@@ -823,8 +812,9 @@ public class ManifestParser
                         + "' namespace.");
                 }
                 
-                if(path.startsWith(NativeNamespace.NATIVE_NAMESPACE) && (owner == null ||
-                        !FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME.equals(owner.getSymbolicName())))
+                if((path.startsWith(ExecutionEnvironmentNamespace.EXECUTION_ENVIRONMENT_NAMESPACE) ||
+                    path.startsWith(NativeNamespace.NATIVE_NAMESPACE)) && (owner == null ||
+                    !FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME.equals(owner.getSymbolicName())))
                 {
                     throw new BundleException("Only System Bundle can use Provide-Capability for '"
                             + path
@@ -849,18 +839,17 @@ public class ManifestParser
         String mv, String bsn, Version bv)
         throws BundleException
     {
-        // Verify that "java.*" packages are not exported.
         for (ParsedHeaderClause clause : clauses)
         {
             // Verify that the named package has not already been declared.
             for (String pkgName : clause.m_paths)
             {
-                // Verify that java.* packages are not exported.
-                if (pkgName.startsWith("java."))
+                // Verify that java.* packages are not exported (except from the system bundle).
+                if (!FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME.equals(bsn) && pkgName.startsWith("java."))
                 {
                     throw new BundleException(
                         "Exporting java.* packages not allowed: "
-                        + pkgName);
+                        + pkgName, BundleException.MANIFEST_ERROR);
                 }
                 // The character "." has no meaning in the OSGi spec except
                 // when placed on the bundle class path. Some people, however,
@@ -1049,11 +1038,6 @@ public class ManifestParser
         return m_requirements;
     }
 
-    public List<NativeLibraryClause> getLibraryClauses()
-    {
-        return m_libraryClauses;
-    }
-
     /**
      * <p>
      * This method returns the selected native library metadata from
@@ -1194,10 +1178,10 @@ public class ManifestParser
             }
             for (int k = 0; (osversions != null) && (k < osversions.length); k++)
             {
-                VersionRange range = VersionRange.parse(osversions[k]);
-                if ((range.getFloor()).compareTo(osVersionRangeMaxFloor) >= 0)
+                VersionRange range = new VersionRange(osversions[k]);
+                if ((range.getLeft()).compareTo(osVersionRangeMaxFloor) >= 0)
                 {
-                    osVersionRangeMaxFloor = range.getFloor();
+                    osVersionRangeMaxFloor = range.getLeft();
                 }
             }
         }
@@ -1218,8 +1202,8 @@ public class ManifestParser
                 String[] osversions = ((NativeLibraryClause) clauseList.get(index)).getOSVersions();
                 for (int k = 0; k < osversions.length; k++)
                 {
-                    VersionRange range = VersionRange.parse(osversions[k]);
-                    if ((range.getFloor()).compareTo(osVersionRangeMaxFloor) >= 0)
+                    VersionRange range = new VersionRange(osversions[k]);
+                    if ((range.getLeft()).compareTo(osVersionRangeMaxFloor) >= 0)
                     {
                         selection.add("" + indexList.get(i));
                     }
@@ -1301,7 +1285,7 @@ public class ManifestParser
                 {
                     attrs.put(
                         Constants.VERSION_ATTRIBUTE,
-                        VersionRange.parse(version.toString()));
+                        new VersionRange(version.toString()));
                 }
 
                 List<String> paths = new ArrayList<String>();
@@ -1362,8 +1346,7 @@ public class ManifestParser
                 throw new BundleException(
                     "Extension bundle must have either 'extension:=framework' or 'extension:=bootclasspath'");
             }
-            if (headerMap.containsKey(Constants.IMPORT_PACKAGE) ||
-                headerMap.containsKey(Constants.REQUIRE_BUNDLE) ||
+            if (headerMap.containsKey(Constants.REQUIRE_BUNDLE) ||
                 headerMap.containsKey(Constants.BUNDLE_NATIVECODE) ||
                 headerMap.containsKey(Constants.DYNAMICIMPORT_PACKAGE) ||
                 headerMap.containsKey(Constants.BUNDLE_ACTIVATOR))
@@ -1515,7 +1498,7 @@ public class ManifestParser
                 {
                     clauses.get(0).m_attrs.put(
                         Constants.BUNDLE_VERSION_ATTRIBUTE,
-                        VersionRange.parse(value.toString()));
+                        new VersionRange(value.toString()));
                 }
 
                 // Note that we use a linked hash map here to ensure the
@@ -1564,24 +1547,6 @@ public class ManifestParser
         }
 
         return reqs;
-    }
-
-    public static List<BundleCapability> parseExportHeader(
-        Logger logger, BundleRevision owner, String header, String bsn, Version bv)
-    {
-
-        List<BundleCapability> caps = null;
-        try
-        {
-            List<ParsedHeaderClause> exportClauses = parseStandardHeader(header);
-            exportClauses = normalizeExportClauses(logger, exportClauses, "2", bsn, bv);
-            caps = convertExports(exportClauses, owner);
-        }
-        catch (BundleException ex)
-        {
-            caps = null;
-        }
-        return caps;
     }
 
     private static List<BundleRequirement> parseBreeHeader(String header, BundleRevision owner)
@@ -1697,7 +1662,8 @@ public class ManifestParser
         }
     }
 
-    private static String getBreeVersionClause(Version ver) {
+    private static String getBreeVersionClause(Version ver)
+    {
         if (ver == null)
             return null;
 
@@ -1722,7 +1688,7 @@ public class ManifestParser
                 {
                     clause.m_attrs.put(
                         Constants.BUNDLE_VERSION_ATTRIBUTE,
-                        VersionRange.parse(value.toString()));
+                        new VersionRange(value.toString()));
                 }
             }
         }
@@ -2064,7 +2030,7 @@ public class ManifestParser
         int STARTQUOTE = 4;
         int ENDQUOTE = 8;
 
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
 
         int expecting = (CHAR | DELIMITER | STARTQUOTE);
 
@@ -2160,5 +2126,67 @@ public class ManifestParser
         }
 
         return libList;
+    }
+
+    public static List<BundleCapability> aliasSymbolicName(List<BundleCapability> caps, BundleRevision owner)
+    {
+        if (caps == null)
+        {
+            return new ArrayList<BundleCapability>(0);
+        }
+
+        List<BundleCapability> aliasCaps = new ArrayList<BundleCapability>(caps);
+
+        String[] aliases = {
+                FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME,
+                Constants.SYSTEM_BUNDLE_SYMBOLICNAME };
+
+        for (int capIdx = 0; capIdx < aliasCaps.size(); capIdx++)
+        {
+            BundleCapability cap = aliasCaps.get(capIdx);
+
+            // Need to alias bundle and host capabilities.
+            if (cap.getNamespace().equals(BundleRevision.BUNDLE_NAMESPACE)
+                    || cap.getNamespace().equals(BundleRevision.HOST_NAMESPACE))
+            {
+                // Make a copy of the attribute array.
+                Map<String, Object> aliasAttrs =
+                        new HashMap<String, Object>(cap.getAttributes());
+                // Add the aliased value.
+                aliasAttrs.put(cap.getNamespace(), aliases);
+                // Create the aliased capability to replace the old capability.
+                cap = new BundleCapabilityImpl(
+                        owner,
+                        cap.getNamespace(),
+                        cap.getDirectives(),
+                        aliasAttrs);
+                aliasCaps.set(capIdx, cap);
+            }
+
+            // Further, search attributes for bundle symbolic name and alias it too.
+            for (Entry<String, Object> entry : cap.getAttributes().entrySet())
+            {
+                // If there is a bundle symbolic name attribute, add the
+                // standard alias as a value.
+                if (entry.getKey().equalsIgnoreCase(Constants.BUNDLE_SYMBOLICNAME_ATTRIBUTE))
+                {
+                    // Make a copy of the attribute array.
+                    Map<String, Object> aliasAttrs =
+                            new HashMap<String, Object>(cap.getAttributes());
+                    // Add the aliased value.
+                    aliasAttrs.put(Constants.BUNDLE_SYMBOLICNAME_ATTRIBUTE, aliases);
+                    // Create the aliased capability to replace the old capability.
+                    aliasCaps.set(capIdx, new BundleCapabilityImpl(
+                            owner,
+                            cap.getNamespace(),
+                            cap.getDirectives(),
+                            aliasAttrs));
+                    // Continue with the next capability.
+                    break;
+                }
+            }
+        }
+
+        return aliasCaps;
     }
 }

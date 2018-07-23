@@ -34,12 +34,12 @@ import java.util.regex.Pattern;
 
 import org.apache.felix.framework.Logger;
 import org.apache.felix.framework.util.FelixConstants;
-import org.apache.felix.framework.util.VersionRange;
 import org.osgi.framework.BundleException;
 import org.osgi.framework.Constants;
 import org.osgi.framework.Filter;
 import org.osgi.framework.FrameworkUtil;
 import org.osgi.framework.Version;
+import org.osgi.framework.VersionRange;
 
 public class NativeLibraryClause
 {
@@ -123,7 +123,7 @@ public class NativeLibraryClause
     /**
      * Initialize the processor and os name aliases from Felix Config.
      *
-     * @param config
+     * @param configMap
      */
     public static synchronized void initializeNativeAliases(Map configMap)
     {
@@ -239,13 +239,17 @@ public class NativeLibraryClause
         String language = (String) configMap.get(FelixConstants.FRAMEWORK_LANGUAGE);
 
         // Check library's osname.
-        if (!checkOSNames(osName, getOSNames()))
+        if ((getOSNames() != null) &&
+            (getOSNames().length > 0) &&
+            !checkOSNames(osName, getOSNames()))
         {
             return false;
         }
 
         // Check library's processor.
-        if (!checkProcessors(processorName, getProcessors()))
+        if ((getProcessors() != null) &&
+            (getProcessors().length > 0) &&
+            !checkProcessors(processorName, getProcessors()))
         {
             return false;
         }
@@ -268,7 +272,6 @@ public class NativeLibraryClause
 
         // Check library's selection-filter if specified.
         if ((getSelectionFilter() != null) &&
-            (getSelectionFilter().length() >= 0) &&
             !checkSelectionFilter(configMap, getSelectionFilter()))
         {
             return false;
@@ -318,8 +321,8 @@ public class NativeLibraryClause
         {
             try
             {
-                VersionRange range = VersionRange.parse(osversions[i]);
-                if (range.isInRange(currentOSVersion))
+                VersionRange range = new VersionRange(osversions[i]);
+                if (range.includes(currentOSVersion))
                 {
                     return true;
                 }
@@ -752,8 +755,8 @@ public class NativeLibraryClause
                 String s = value.substring(1, value.length() - 1);
                 String vlo = s.substring(0, s.indexOf(',')).trim();
                 String vhi = s.substring(s.indexOf(',') + 1, s.length()).trim();
-                return new VersionRange(new Version(cleanupVersion(vlo)), (value.charAt(0) == '['), new Version(
-                    cleanupVersion(vhi)), (value.charAt(value.length() - 1) == ']')).toString();
+                return new VersionRange(value.charAt(0), new Version(cleanupVersion(vlo)), new Version(
+                    cleanupVersion(vhi)), value.charAt(value.length() - 1)).toString();
             }
 
             catch (Exception ex)
@@ -775,7 +778,7 @@ public class NativeLibraryClause
 
     private static String cleanupVersion( String version )
     {
-        StringBuffer result = new StringBuffer();
+        StringBuilder result = new StringBuilder();
         Matcher m = FUZZY_VERSION.matcher( version );
         if ( m.matches() )
         {
@@ -831,7 +834,7 @@ public class NativeLibraryClause
     }
 
 
-    private static void cleanupModifier( StringBuffer result, String modifier )
+    private static void cleanupModifier( StringBuilder result, String modifier )
     {
         for ( int i = 0; i < modifier.length(); i++ )
         {

@@ -182,12 +182,7 @@ public class Parser
     }
 
     public List<Statement> statements() {
-        Collections.sort(statements, new Comparator<Statement>() {
-                    @Override
-                    public int compare(Statement o1, Statement o2) {
-                        return Integer.compare(o1.start, o2.start);
-                    }
-                });
+        statements.sort(Comparator.comparingInt(o -> o.start));
         return Collections.unmodifiableList(statements);
     }
 
@@ -211,11 +206,15 @@ public class Parser
                     return new Program(whole(tokens, start), tokens);
                 }
             }
-            if (Token.eq("}", t) || Token.eq(")", t))
+            if (Token.eq("}", t) || Token.eq(")", t) || Token.eq("]", t))
             {
                 if (pipes != null)
                 {
                     throw new EOFError(t.line, t.column, "unexpected token '" + t + "' while looking for a statement after |", getMissing("pipe"), "0");
+                }
+                else if (stack.isEmpty())
+                {
+                    throw new SyntaxError(t.line, t.column, "unexpected token '" + t + "'");
                 }
                 else
                 {

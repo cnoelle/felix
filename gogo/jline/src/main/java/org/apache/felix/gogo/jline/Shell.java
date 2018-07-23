@@ -29,6 +29,7 @@ import java.io.Reader;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLConnection;
@@ -200,22 +201,29 @@ public class Shell {
     }
 
     public static CharSequence readScript(URI script) throws Exception {
-        URLConnection conn = script.toURL().openConnection();
-        int length = conn.getContentLength();
+        CharBuffer buf = CharBuffer.allocate(4096);
+        StringBuilder sb = new StringBuilder();
 
-        if (length == -1) {
-            System.err.println("eek! unknown Contentlength for: " + script);
-            length = 10240;
+        URLConnection conn = script.toURL().openConnection();
+
+        try (InputStreamReader in = new InputStreamReader(conn.getInputStream()))
+        {
+            while (in.read(buf) > 0)
+            {
+                buf.flip();
+                sb.append(buf);
+                buf.clear();
+            }
+        }
+        finally
+        {
+            if (conn instanceof HttpURLConnection)
+            {
+                ((HttpURLConnection) conn).disconnect();
+            }
         }
 
-        InputStream in = conn.getInputStream();
-        CharBuffer cbuf = CharBuffer.allocate(length);
-        Reader reader = new InputStreamReader(in);
-        reader.read(cbuf);
-        in.close();
-        cbuf.rewind();
-
-        return cbuf;
+        return sb;
     }
 
     @SuppressWarnings("unchecked")
@@ -244,6 +252,7 @@ public class Shell {
                 "Usage: gosh [OPTIONS] [script-file [args..]]",
                 "  -c --command             pass all remaining args to sub-shell",
                 "     --nointeractive       don't start interactive session",
+                "     --nohistory           don't save the command history",
                 "     --login               login shell (same session, reads etc/gosh_profile)",
                 "  -s --noshutdown          don't shutdown framework when script completes",
                 "  -x --xtrace              echo commands before execution",
@@ -287,7 +296,9 @@ public class Shell {
         session.put("#COLUMNS", (Function) (s, arguments) -> terminal.getWidth());
         session.put("#LINES", (Function) (s, arguments) -> terminal.getHeight());
         session.put("#PWD", (Function) (s, arguments) -> s.currentDir().toString());
-        session.put(LineReader.HISTORY_FILE, Paths.get(System.getProperty("user.home"), ".gogo.history"));
+        if (!opt.isSet("nohistory")) {
+            session.put(LineReader.HISTORY_FILE, Paths.get(System.getProperty("user.home"), ".gogo.history"));
+        }
 
         if (tio != null) {
             PrintWriter writer = terminal.writer();
@@ -296,13 +307,13 @@ public class Shell {
                 public void write(int b) throws IOException {
                     write(new byte[]{(byte) b}, 0, 1);
                 }
-                public void write(byte b[], int off, int len) throws IOException {
+                public void write(byte b[], int off, int len) {
                     writer.write(new String(b, off, len));
                 }
-                public void flush() throws IOException {
+                public void flush() {
                     writer.flush();
                 }
-                public void close() throws IOException {
+                public void close() {
                     writer.close();
                 }
             });
@@ -468,7 +479,7 @@ public class Shell {
                         if (stopping.get()) {
                             break;
                         }
-                        reader.readLine(prompt, rprompt, null, null);
+                        reader.readLine(prompt, rprompt, (Character) null, null);
                     } finally {
                         reading.set(false);
                     }
@@ -498,7 +509,11 @@ public class Shell {
                 } catch (UserInterruptException e) {
                     // continue;
                 } catch (EndOfFileException e) {
-                    reader.getHistory().save();
+                    try {
+                        reader.getHistory().save();
+                    } catch (IOException e1) {
+                        // ignore
+                    }
                     break;
                 }
             }

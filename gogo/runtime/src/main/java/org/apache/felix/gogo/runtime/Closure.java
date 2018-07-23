@@ -18,12 +18,13 @@
  */
 package org.apache.felix.gogo.runtime;
 
-import java.io.ByteArrayOutputStream;
-import java.io.EOFException;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
+import java.io.*;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channel;
 import java.nio.channels.Channels;
+import java.nio.channels.ClosedChannelException;
+import java.nio.channels.WritableByteChannel;
+import java.nio.channels.spi.AbstractInterruptibleChannel;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -228,7 +229,11 @@ public class Closure implements Function, Evaluate
                 streams = Pipe.getCurrentPipe().streams.clone();
             } else {
                 streams = new Channel[10];
-                System.arraycopy(session.channels, 0, streams, 0, 3);
+                streams[0] = session.channels[0];
+                streams[1] = new WritableByteChannelImpl((WritableByteChannel) session.channels[1]);
+                streams[2] = session.channels[1] == session.channels[2]
+                                ? streams[1]
+                                : new WritableByteChannelImpl((WritableByteChannel) session.channels[2]);
             }
             if (capturingOutput != null) {
                 streams[1] = capturingOutput;
@@ -302,6 +307,30 @@ public class Closure implements Function, Evaluate
         }
 
         return last == null ? null : last.result;
+    }
+
+    private static class WritableByteChannelImpl extends AbstractInterruptibleChannel
+            implements WritableByteChannel {
+        private final WritableByteChannel out;
+
+        WritableByteChannelImpl(WritableByteChannel out) {
+            this.out = out;
+        }
+
+        public int write(ByteBuffer src) throws IOException {
+            if (!isOpen()) {
+                throw new ClosedChannelException();
+            }
+            begin();
+            try {
+                return out.write(src);
+            } finally {
+                end(true);
+            }
+       }
+
+        protected void implCloseChannel() {
+        }
     }
 
     static Object eval(Object v)
@@ -520,8 +549,7 @@ public class Closure implements Function, Evaluate
         }
     }
 
-    private boolean bareword(Token t, Object v) throws Exception
-    {
+    private boolean bareword(Token t, Object v) {
         return v instanceof CharSequence && Token.eq(t, (CharSequence) v);
     }
 
@@ -593,8 +621,7 @@ public class Closure implements Function, Evaluate
             {
                 if (".".equals(arg))
                 {
-                    target = Reflective.invoke(session, target,
-                        args.remove(0).toString(), args);
+                    target = invoke(target, args.remove(0).toString(), args);
                     args.clear();
                 }
                 else
@@ -608,7 +635,7 @@ public class Closure implements Function, Evaluate
                 return target;
             }
 
-            return Reflective.invoke(session, target, args.remove(0).toString(), args);
+            return invoke(target, args.remove(0).toString(), args);
         }
         else if (cmd.getClass().isArray() && values.size() == 1)
         {
@@ -618,8 +645,13 @@ public class Closure implements Function, Evaluate
         }
         else
         {
-            return Reflective.invoke(session, cmd, values.remove(0).toString(), values);
+            return invoke(cmd, values.remove(0).toString(), values);
         }
+    }
+
+    private Object invoke(Object target, String name, List<Object> args) throws Exception
+    {
+        return session.invoke(target, name, args);
     }
 
     private Object assignment(String name, Object value)
@@ -717,6 +749,11 @@ public class Closure implements Function, Evaluate
     @Override
     public Path currentDir() {
         return isSet(CommandSession.OPTION_NO_GLOB, false) ? null : session().currentDir();
+    }
+
+    @Override
+    public ClassLoader classLoader() {
+        return session.classLoader();
     }
 
     protected boolean isSet(String name, boolean def) {

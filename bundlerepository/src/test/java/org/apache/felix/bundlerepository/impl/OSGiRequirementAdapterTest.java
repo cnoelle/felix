@@ -23,7 +23,10 @@ import java.util.Map;
 
 import junit.framework.TestCase;
 
+import org.apache.felix.utils.resource.RequirementImpl;
+import org.mockito.Mockito;
 import org.osgi.resource.Requirement;
+import org.osgi.resource.Resource;
 
 public class OSGiRequirementAdapterTest extends TestCase
 {
@@ -37,7 +40,7 @@ public class OSGiRequirementAdapterTest extends TestCase
         dirs.put("resolution", "optional");
         dirs.put("test", "test");
 
-        Requirement req = new OSGiRequirementImpl("osgi.wiring.package", attrs, dirs);
+        Requirement req = new RequirementImpl(Mockito.mock(Resource.class), "osgi.wiring.package", dirs, attrs);
         OSGiRequirementAdapter adapter = new OSGiRequirementAdapter(req);
 
         assertEquals("(package=y)", adapter.getFilter());

@@ -20,7 +20,10 @@ package org.apache.felix.http.jetty.internal;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.zip.Deflater;
 
+import org.eclipse.jetty.server.handler.gzip.GzipHandler;
+import org.eclipse.jetty.server.session.HouseKeeper;
 import org.osgi.framework.Bundle;
 import org.osgi.service.metatype.AttributeDefinition;
 import org.osgi.service.metatype.MetaTypeProvider;
@@ -56,7 +59,7 @@ class ConfigMetaTypeProvider implements MetaTypeProvider
             return null;
         }
 
-        final ArrayList<AttributeDefinition> adList = new ArrayList<AttributeDefinition>();
+        final ArrayList<AttributeDefinition> adList = new ArrayList<>();
 
         adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_HOST,
                 "Host Name",
@@ -91,8 +94,8 @@ class ConfigMetaTypeProvider implements MetaTypeProvider
 
         adList.add(new AttributeDefinitionImpl(JettyConfig.HTTPS_PORT,
                 "HTTPS Port",
-                "Port to listen on for HTTPS requests. Defaults to 433.",
-                433,
+                "Port to listen on for HTTPS requests. Defaults to 443.",
+                443,
                 bundle.getBundleContext().getProperty(JettyConfig.HTTPS_PORT)));
 
         adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_KEYSTORE,
@@ -315,12 +318,100 @@ class ConfigMetaTypeProvider implements MetaTypeProvider
                 -1,
                 bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_SERVLET_SESSION_MAX_AGE)));
 
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_SERVLET_SESSION_MAX_AGE,
+                "Session Scavenging Interval",
+                "Interval of session scavenging in seconds. Default is " + String.valueOf(HouseKeeper.DEFAULT_PERIOD_MS / 1000),
+                HouseKeeper.DEFAULT_PERIOD_MS / 1000,
+                bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_SESSION_SCAVENGING_INTERVAL)));
+
         adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_HTTP_SERVICE_NAME,
                 "HTTP Service Name",
                 "HTTP Service Name used in service filter to target specific HTTP instance. Default is null.",
                 null,
                 bundle.getBundleContext().getProperty(JettyConfig.FELIX_HTTP_SERVICE_NAME)));
 
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_HANDLER_ENABLE,
+                "Enable GzipHandler",
+                "Whether the server should use a server-wide gzip handler. Default is false.",
+                false,
+                bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_HANDLER_ENABLE)));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_MIN_GZIP_SIZE,
+                "Gzip Min Size",
+                String.format("The minimum response size to trigger dynamic compression. Default is %d.", GzipHandler.DEFAULT_MIN_GZIP_SIZE),
+                GzipHandler.DEFAULT_MIN_GZIP_SIZE,
+                bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_MIN_GZIP_SIZE)));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_COMPRESSION_LEVEL,
+                "Gzip Compression Level",
+                String.format("The compression level to use. Default is %d.", Deflater.DEFAULT_COMPRESSION),
+                Deflater.DEFAULT_COMPRESSION,
+                bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_COMPRESSION_LEVEL)));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_INFLATE_BUFFER_SIZE,
+                "Gzip Inflate Buffer Size",
+                "The size in bytes of the buffer to inflate compressed request, or <= 0 for no inflation. Default is -1.",
+                -1,
+                bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_INFLATE_BUFFER_SIZE)));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_SYNC_FLUSH,
+                "Gzip Sync Flush",
+                "True if Deflater#SYNC_FLUSH should be used, else Deflater#NO_FLUSH will be used. Default is false.",
+                false,
+                bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_SYNC_FLUSH)));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_USER_AGENT,
+                "Gzip Exclude User Agents",
+                "The regular expressions matching additional user agents to exclude. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_USER_AGENT))));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_INCLUDED_METHODS,
+                "Gzip Include Methods",
+                "The additional http methods to include in compression. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_INCLUDED_METHODS))));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_METHODS,
+                "Gzip Exclude Methods",
+                "The additional http methods to exclude in compression. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_METHODS))));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_INCLUDED_PATHS,
+                "Gzip Included Paths",
+                "The additional path specs to include. Inclusion takes precedence over exclusion. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_INCLUDED_PATHS))));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_PATHS,
+                "Gzip Excluded Paths",
+                "The additional path specs to exclude. Inclusion takes precedence over exclusion. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_PATHS))));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_INCLUDED_MIME_TYPES,
+                "Gzip Included Mime Types",
+                "The included mime types. Inclusion takes precedence over exclusion. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_INCLUDED_MIME_TYPES))));
+        adList.add(new AttributeDefinitionImpl(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_MIME_TYPES,
+                "Gzip Excluded Mime Types",
+                "The excluded mime types. Inclusion takes precedence over exclusion. Default is none.",
+                AttributeDefinition.STRING,
+                null,
+                2147483647,
+                null, null,
+                getStringArray(bundle.getBundleContext().getProperty(JettyConfig.FELIX_JETTY_GZIP_EXCLUDED_MIME_TYPES))));
+        
         return new ObjectClassDefinition()
         {
 
@@ -384,6 +475,12 @@ class ConfigMetaTypeProvider implements MetaTypeProvider
         AttributeDefinitionImpl( final String id, final String name, final String description, final String defaultValue, final String overrideValue )
         {
             this( id, name, description, STRING, defaultValue == null ? null : new String[] { defaultValue }, 0, null, null, overrideValue == null ? null : new String[] { overrideValue } );
+        }
+
+        AttributeDefinitionImpl( final String id, final String name, final String description, final long defaultValue, final String overrideValue )
+        {
+            this( id, name, description, LONG, new String[]
+                { String.valueOf(defaultValue) }, 0, null, null, overrideValue == null ? null : new String[] { overrideValue } );
         }
 
         AttributeDefinitionImpl( final String id, final String name, final String description, final int defaultValue, final String overrideValue )

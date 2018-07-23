@@ -18,10 +18,19 @@
  */
 package org.apache.felix.log;
 
+import java.util.Dictionary;
+import java.util.Hashtable;
+
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.Constants;
+import org.osgi.framework.ServiceRegistration;
+import org.osgi.service.log.LogLevel;
 import org.osgi.service.log.LogReaderService;
 import org.osgi.service.log.LogService;
+import org.osgi.service.log.LoggerFactory;
+import org.osgi.service.log.admin.LoggerAdmin;
+import org.osgi.service.log.admin.LoggerContext;
 
 /**
  * The bundle activator for the OSGi log service (see section 101 of the service
@@ -57,6 +66,10 @@ public final class Activator implements BundleActivator
     private static final boolean DEFAULT_STORE_DEBUG = false;
     /** The log. */
     private Log m_log;
+    /** The LoggerAdmin. */
+    private LoggerAdminImpl m_loggerAdmin;
+    /** The Configuration listener. */
+    private ConfigurationListenerImpl m_configurationListener;
 
     /**
      * Returns the maximum size for the log.
@@ -102,6 +115,15 @@ public final class Activator implements BundleActivator
     }
 
     /**
+     * Return the default log level.
+     * @param context
+     * @return the default log level
+     */
+    private static String getDefaultLogLevel(final BundleContext context) {
+        return context.getProperty(LoggerContext.LOGGER_CONTEXT_DEFAULT_LOGLEVEL);
+    }
+
+    /**
      * Called by the OSGi framework when the bundle is started.
      * Used to register the service implementations with the framework.
      * @param context the bundle context
@@ -111,6 +133,8 @@ public final class Activator implements BundleActivator
     {
         // create the log instance
         m_log = new Log(getMaxSize(context), getStoreDebug(context));
+        // create the LoggerAdmin instance
+        m_loggerAdmin = new LoggerAdminImpl(getDefaultLogLevel(context), m_log);
 
         // register the listeners
         context.addBundleListener(m_log);
@@ -118,11 +142,24 @@ public final class Activator implements BundleActivator
         context.addServiceListener(m_log);
 
         // register the services with the framework
-        context.registerService(LogService.class.getName(),
-            new LogServiceFactory(m_log), null);
+        ServiceRegistration<?> serviceRegistration = context.registerService(
+            new String[] {LogService.class.getName(), LoggerFactory.class.getName()},
+            new LogServiceFactory(m_loggerAdmin), null);
 
         context.registerService(LogReaderService.class.getName(),
             new LogReaderServiceFactory(m_log), null);
+
+        Dictionary<String, Object> properties = new Hashtable<>();
+        properties.put(
+            LoggerAdmin.LOG_SERVICE_ID,
+            serviceRegistration.getReference().getProperty(Constants.SERVICE_ID));
+        context.registerService(LoggerAdmin.class.getName(), m_loggerAdmin, properties);
+
+        try {
+            m_configurationListener = new ConfigurationListenerImpl(context, m_log, m_loggerAdmin);
+        } catch (Exception e) {
+            m_log.log(getClass().getName(), context.getBundle(), null, LogLevel.ERROR, "An error occured while setting up the configuration listener.", e);
+        }
     }
 
     /**
@@ -132,7 +169,12 @@ public final class Activator implements BundleActivator
      */
     public void stop(final BundleContext context) throws Exception
     {
+        // close the configuration listener
+        if (m_configurationListener != null) {
+            m_configurationListener.close();
+        }
         // close the log
         m_log.close();
     }
+
 }

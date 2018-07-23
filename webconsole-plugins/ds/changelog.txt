@@ -1,3 +1,16 @@
+Changes in 2.1.0
+----------------
+** Improvement
+    * [FELIX-5841] : Update webconsole plugin to DS 1.4 (R7)
+
+
+Changes from 2.0.6 to 2.0.8
+---------------------------
+** Improvement
+    * [FELIX-5697] : DS WebConsole Plugin should neither require Configuration Admin nor Metatype
+    * [FELIX-5538] : Replace own JSONWriter with version from utils
+
+
 Changes from 2.0.4 to 2.0.6
 ---------------------------
 ** Improvement

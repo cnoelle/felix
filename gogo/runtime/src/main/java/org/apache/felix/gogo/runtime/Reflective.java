@@ -20,13 +20,16 @@ package org.apache.felix.gogo.runtime;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -38,14 +41,14 @@ public final class Reflective
     public final static Object NO_MATCH = new Object();
     public final static String MAIN = "_main";
     public final static Set<String> KEYWORDS = new HashSet<>(
-        Arrays.asList(new String[] { "abstract", "continue", "for", "new", "switch",
+        Arrays.asList("abstract", "continue", "for", "new", "switch",
                 "assert", "default", "goto", "package", "synchronized", "boolean", "do",
                 "if", "private", "this", "break", "double", "implements", "protected",
                 "throw", "byte", "else", "import", "public", "throws", "case", "enum",
                 "instanceof", "return", "transient", "catch", "extends", "int", "short",
                 "try", "char", "final", "interface", "static", "void", "class",
                 "finally", "long", "strictfp", "volatile", "const", "float", "native",
-                "super", "while" }));
+                "super", "while"));
 
     /**
      * invokes the named method on the given target using the supplied args,
@@ -57,7 +60,7 @@ public final class Reflective
         List<Object> args) throws Exception
     {
         Method[] methods = target.getClass().getMethods();
-        name = name.toLowerCase();
+        name = name.toLowerCase(Locale.ENGLISH);
 
         String org = name;
         String get = "get" + name;
@@ -74,7 +77,7 @@ public final class Reflective
             Method[] staticMethods = ((Class<?>) target).getMethods();
             for (Method m : staticMethods)
             {
-                String mname = m.getName().toLowerCase();
+                String mname = m.getName().toLowerCase(Locale.ENGLISH);
                 if (mname.equals(name) || mname.equals(get) || mname.equals(set)
                     || mname.equals(is) || mname.equals(MAIN))
                 {
@@ -91,7 +94,7 @@ public final class Reflective
 
         for (Method m : methods)
         {
-            String mname = m.getName().toLowerCase();
+            String mname = m.getName().toLowerCase(Locale.ENGLISH);
             if (mname.equals(name) || mname.equals(get) || mname.equals(set)
                 || mname.equals(is) || mname.equals(MAIN))
             {
@@ -147,6 +150,26 @@ public final class Reflective
         }
         else
         {
+            if (args.isEmpty())
+            {
+                Field[] fields;
+                if (target instanceof Class<?>)
+                {
+                    fields = ((Class<?>) target).getFields();
+                }
+                else
+                    {
+                    fields = target.getClass().getFields();
+                }
+                for (Field f : fields)
+                {
+                    String mname = f.getName().toLowerCase(Locale.ENGLISH);
+                    if (mname.equals(name))
+                    {
+                        return f.get(target);
+                    }
+                }
+            }
             ArrayList<String> list = new ArrayList<>();
             for (Class<?>[] types : possibleTypes)
             {
@@ -410,6 +433,30 @@ public final class Reflective
         if (type.isAssignableFrom(arg.getClass()))
         {
             return arg;
+        }
+
+        if (type.isArray() && arg instanceof Collection)
+        {
+            Collection col = (Collection) arg;
+            return col.toArray((Object[]) Array.newInstance(type.getComponentType(), col.size()));
+        }
+
+        if (type.isAssignableFrom(List.class) && arg.getClass().isArray())
+        {
+            return new AbstractList<Object>()
+            {
+                @Override
+                public Object get(int index)
+                {
+                    return Array.get(arg, index);
+                }
+
+                @Override
+                public int size()
+                {
+                    return Array.getLength(arg);
+                }
+            };
         }
 
         if (type.isArray())

@@ -86,9 +86,9 @@ import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 import org.jline.utils.AttributedString;
 import org.jline.utils.AttributedStringBuilder;
-import org.jline.utils.AttributedStyle;
 import org.jline.utils.InfoCmp.Capability;
 import org.jline.utils.OSUtils;
+import org.jline.utils.StyleResolver;
 
 /**
  * Posix-like utilities.
@@ -998,7 +998,7 @@ public class Posix {
         List<String> sortFields = opt.getList("key");
 
         char sep = (separator == null || separator.length() == 0) ? '\0' : separator.charAt(0);
-        Collections.sort(lines, new SortComparator(caseInsensitive, reverse, ignoreBlanks, numeric, sep, sortFields));
+        lines.sort(new SortComparator(caseInsensitive, reverse, ignoreBlanks, numeric, sep, sortFields));
         String last = null;
         for (String s : lines) {
             if (!unique || last == null || !s.equals(last)) {
@@ -1158,13 +1158,9 @@ public class Posix {
                     type = "";
                     suffix = "";
                 }
-                String col = colors.get(type);
                 boolean addSuffix = opt.isSet("F");
-                if (col != null && !col.isEmpty()) {
-                    return "\033[" + col + "m" + path.toString() + "\033[m" + (addSuffix ? suffix : "") + link;
-                } else {
-                    return path.toString() + (addSuffix ? suffix : "") + link;
-                }
+                return applyStyle(path.toString(), colors, type)
+                        + (addSuffix ? suffix : "") + link;
             }
 
             String longDisplay() {
@@ -1258,7 +1254,7 @@ public class Posix {
                     try {
                         Map<String, Object> ta = Files.readAttributes(path, view + ":*",
                                 getLinkOptions(opt.isSet("L")));
-                        ta.entrySet().forEach(e -> attrs.putIfAbsent(e.getKey(), e.getValue()));
+                        ta.forEach(attrs::putIfAbsent);
                     } catch (IOException e) {
                         // Ignore
                     }
@@ -1337,7 +1333,7 @@ public class Posix {
             if (expanded.size() > 1) {
                 out.println(currentDir.relativize(path).toString() + ":");
             }
-            display.accept(Stream.concat(Arrays.asList(".", "..").stream().map(path::resolve), Files.list(path))
+            display.accept(Stream.concat(Stream.of(".", "..").map(path::resolve), Files.list(path))
                             .filter(filter)
                             .map(p -> new PathEntry(p, path))
                             .sorted()
@@ -1628,8 +1624,8 @@ public class Posix {
                         if (colored) {
                             applyStyle(sbl, colors, style);
                         }
-                        Matcher matcher2 = p2.matcher(line);
                         AttributedString aLine = AttributedString.fromAnsi(line);
+                        Matcher matcher2 = p2.matcher(aLine.toString());
                         int cur = 0;
                         while (matcher2.find()) {
                             int index = matcher2.start(0);
@@ -2058,26 +2054,36 @@ public class Posix {
     public static Map<String, String> getColorMap(CommandSession session, String name, String def) {
         Object obj = session.get(name + "_COLORS");
         String str = obj != null ? obj.toString() : null;
-        if (str == null || !str.matches("[a-z]{2}=[0-9]*(;[0-9]+)*(:[a-z]{2}=[0-9]*(;[0-9]+)*)*")) {
+        if (str == null) {
             str = def;
         }
-        return Arrays.stream(str.split(":"))
+        String sep = str.matches("[a-z]{2}=[0-9]*(;[0-9]+)*(:[a-z]{2}=[0-9]*(;[0-9]+)*)*") ? ":" : " ";
+        return Arrays.stream(str.split(sep))
                 .collect(Collectors.toMap(s -> s.substring(0, s.indexOf('=')),
                                           s -> s.substring(s.indexOf('=') + 1)));
     }
 
-    private void applyStyle(AttributedStringBuilder sb, Map<String, String> colors, String... types) {
-        String col = null;
+    static String applyStyle(String text, Map<String, String> colors, String... types) {
+        String t = null;
         for (String type : types) {
-            col = colors.get(type);
-            if (col != null) {
+            if (colors.get(type) != null) {
+                t = type;
                 break;
             }
         }
-        sb.style(AttributedStyle.DEFAULT);
-        if (col != null && !col.isEmpty()) {
-            sb.appendAnsi("\033[" + col + "m");
+        return new AttributedString(text, new StyleResolver(colors::get).resolve("." + t))
+                .toAnsi();
+    }
+
+    static void applyStyle(AttributedStringBuilder sb, Map<String, String> colors, String... types) {
+        String t = null;
+        for (String type : types) {
+            if (colors.get(type) != null) {
+                t = type;
+                break;
+            }
         }
+        sb.style(new StyleResolver(colors::get).resolve("." + t));
     }
 
     private static class StdInSource implements Source {
@@ -2094,7 +2100,7 @@ public class Posix {
         }
 
         @Override
-        public InputStream read() throws IOException {
+        public InputStream read() {
             return process.in();
         }
     }

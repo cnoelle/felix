@@ -1,5 +1,16 @@
-Changes from 1.1.2 to ...
--------------------------
+Changes in 1.2.0
+----------------
+** Improvement
+    * [FELIX-5779] - Update metatype to R7 (version 1.4)
+
+Changes from 1.1.4 to 1.1.6
+---------------------------
+** Bug
+    * [FELIX-5702] - All files in OSGi-INF/metatype must be considered
+
+
+Changes from 1.1.2 to 1.1.4
+---------------------------
 
 ** Bug
     * [FELIX-5173] - Metatype service's BundleResources ignore properties provided by fragment bundles

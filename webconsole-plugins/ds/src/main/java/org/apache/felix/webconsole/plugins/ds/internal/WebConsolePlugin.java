@@ -37,18 +37,14 @@ import org.apache.felix.webconsole.DefaultVariableResolver;
 import org.apache.felix.webconsole.SimpleWebConsolePlugin;
 import org.apache.felix.webconsole.WebConsoleUtil;
 import org.osgi.framework.Bundle;
+import org.osgi.framework.BundleContext;
 import org.osgi.framework.Constants;
-import org.osgi.framework.InvalidSyntaxException;
-import org.osgi.service.cm.Configuration;
-import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.ComponentConstants;
 import org.osgi.service.component.runtime.ServiceComponentRuntime;
 import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
 import org.osgi.service.component.runtime.dto.ComponentDescriptionDTO;
 import org.osgi.service.component.runtime.dto.ReferenceDTO;
 import org.osgi.service.component.runtime.dto.SatisfiedReferenceDTO;
-import org.osgi.service.metatype.MetaTypeInformation;
-import org.osgi.service.metatype.MetaTypeService;
 import org.osgi.util.promise.Promise;
 
 /**
@@ -71,22 +67,42 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
     private static final String OPERATION_DISABLE = "disable"; //$NON-NLS-1$
     //private static final String OPERATION_CONFIGURE = "configure";
 
-    // needed services
-    static final String SCR_SERVICE = ServiceComponentRuntime.class.getName(); //$NON-NLS-1$
-    private static final String META_TYPE_NAME = "org.osgi.service.metatype.MetaTypeService"; //$NON-NLS-1$
-    private static final String CONFIGURATION_ADMIN_NAME = "org.osgi.service.cm.ConfigurationAdmin"; //$NON-NLS-1$
-
     // templates
     private final String TEMPLATE;
 
+    private volatile ConfigurationSupport optionalSupport;
+
+    private final ServiceComponentRuntime runtime;
+
     /** Default constructor */
-    WebConsolePlugin()
+    WebConsolePlugin(final ServiceComponentRuntime service)
     {
         super(LABEL, TITLE, CSS);
 
+        this.runtime = service;
         // load templates
         TEMPLATE = readTemplateFile("/res/plugin.html"); //$NON-NLS-1$
     }
+
+
+    @Override
+    public void deactivate() {
+        if ( this.optionalSupport != null )
+        {
+            this.optionalSupport.close();
+            this.optionalSupport = null;
+        }
+        super.deactivate();
+    }
+
+
+    @Override
+    public void activate(final BundleContext bundleContext)
+    {
+        super.activate(bundleContext);
+        this.optionalSupport = new ConfigurationSupport(bundleContext);
+    }
+
 
     @Override
     public String getCategory()
@@ -125,13 +141,13 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
             {
                 if (OPERATION_ENABLE.equals(op))
                 {
-                    wait(getScrService().enableComponent(reqInfo.component.description));
+                    wait(this.runtime.enableComponent(reqInfo.component.description));
                     reqInfo = new RequestInfo(request, false);
                     found = true;
                 }
                 else if ( OPERATION_DISABLE.equals(op) )
                 {
-                    wait(getScrService().disableComponent(reqInfo.component.description));
+                    wait(this.runtime.disableComponent(reqInfo.component.description));
                     found = true;
                 }
             }
@@ -187,6 +203,7 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
     /**
      * @see org.apache.felix.webconsole.AbstractWebConsolePlugin#renderContent(javax.servlet.http.HttpServletRequest, javax.servlet.http.HttpServletResponse)
      */
+    @SuppressWarnings("unchecked")
     @Override
     protected void renderContent(HttpServletRequest request, HttpServletResponse response)
             throws IOException
@@ -214,42 +231,35 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
         jw.object();
 
         jw.key("status"); //$NON-NLS-1$
-        if (info.scrService == null)
+        jw.value(info.configurations.size());
+        if ( !info.configurations.isEmpty() )
         {
-            jw.value(-1);
-        }
-        else
-        {
-            jw.value(info.configurations.size());
-            if ( !info.configurations.isEmpty() )
+            // render components
+            jw.key("data"); //$NON-NLS-1$
+            jw.array();
+            if (component != null)
             {
-                // render components
-                jw.key("data"); //$NON-NLS-1$
-                jw.array();
-                if (component != null)
+                if ( component.state == -1 )
                 {
-                    if ( component.state == -1 )
-                    {
-                        component(jw, component.description, null, true);
-                    }
-                    else
-                    {
-                        component(jw, component.description, component, true);
-                    }
+                    component(jw, component.description, null, true);
                 }
                 else
                 {
-                    for( final ComponentDescriptionDTO cd : info.disabled )
-                    {
-                        component(jw, cd, null, false);
-                    }
-                    for (final ComponentConfigurationDTO cfg : info.configurations)
-                    {
-                        component(jw, cfg.description, cfg, false);
-                    }
+                    component(jw, component.description, component, true);
                 }
-                jw.endArray();
             }
+            else
+            {
+                for( final ComponentDescriptionDTO cd : info.disabled )
+                {
+                    component(jw, cd, null, false);
+                }
+                for (final ComponentConfigurationDTO cfg : info.configurations)
+                {
+                    component(jw, cfg.description, cfg, false);
+                }
+            }
+            jw.endArray();
         }
 
         jw.endObject();
@@ -266,7 +276,7 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
         }
         jw.key("pid"); //$NON-NLS-1$
         jw.value(pid);
-        if (isConfigurable(
+        if (this.optionalSupport.isConfigurable(
                 this.getBundleContext().getBundle(0).getBundleContext().getBundle(desc.bundle.id),
                 configurationPid))
         {
@@ -344,6 +354,12 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
 
         keyVal(jw, "Configuration Policy", desc.configurationPolicy);
 
+        if ( component != null && component.state == ComponentConfigurationDTO.FAILED_ACTIVATION && component.failure != null ) {
+            keyVal(jw, "failure", component.failure);
+        }
+        if ( component != null && component.service != null ) {
+            keyVal(jw, "serviceId", component.service.id);
+        }
         listServices(jw, desc);
         if (desc.configurationPid.length == 1) {
             keyVal(jw, "PID", desc.configurationPid[0]);
@@ -483,7 +499,27 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
             jw.endArray();
             jw.endObject();
         }
+        if ( component == null && desc.factoryProperties != null ) {
+            jw.object();
+            jw.key("key");
+            jw.value("FactoryProperties");
+            jw.key("value");
+            jw.array();
+            TreeSet<String> keys = new TreeSet<String>(desc.factoryProperties.keySet());
+            for (Iterator<String> ki = keys.iterator(); ki.hasNext();)
+            {
+                final String key = ki.next();
+                final StringBuilder b = new StringBuilder();
+                b.append(key).append(" = ");
 
+                Object prop = props.get(key);
+                prop = WebConsoleUtil.toString(prop);
+                b.append(prop);
+                jw.value(b.toString());
+            }
+            jw.endArray();
+            jw.endObject();
+        }
     }
 
     private void keyVal(JSONWriter jw, String key, Object value) throws IOException
@@ -499,90 +535,19 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
         }
     }
 
-    /**
-     * Check if the component with the specified pid is
-     * configurable
-     * @param providingBundle The Bundle providing the component. This may be
-     *      theoretically be <code>null</code>.
-     * @param pid A non null pid
-     * @return <code>true</code> if the component is configurable.
-     */
-    private boolean isConfigurable(final Bundle providingBundle, final String pid)
-    {
-        // we first check if the config admin has something for this pid
-        final ConfigurationAdmin ca = this.getConfigurationAdmin();
-        if (ca != null)
-        {
-            try
-            {
-                // we use listConfigurations to not create configuration
-                // objects persistently without the user providing actual
-                // configuration
-                String filter = '(' + Constants.SERVICE_PID + '=' + pid + ')';
-                Configuration[] configs = ca.listConfigurations(filter);
-                if (configs != null && configs.length > 0)
-                {
-                    return true;
-                }
-            }
-            catch (InvalidSyntaxException ise)
-            {
-                // should print message
-            }
-            catch (IOException ioe)
-            {
-                // should print message
-            }
-        }
-        // second check is using the meta type service
-        if (providingBundle != null)
-        {
-            final MetaTypeService mts = this.getMetaTypeService();
-            if (mts != null)
-            {
-                final MetaTypeInformation mti = mts.getMetaTypeInformation(providingBundle);
-                if (mti != null)
-                {
-                    try {
-                        return mti.getObjectClassDefinition(pid, null) != null;
-                    } catch (IllegalArgumentException e) {
-                        return false;
-                    }
-                }
-            }
-        }
-        return false;
-    }
 
-    private final ConfigurationAdmin getConfigurationAdmin()
-    {
-        return (ConfigurationAdmin) getService(CONFIGURATION_ADMIN_NAME);
-    }
-
-    final ServiceComponentRuntime getScrService()
-    {
-        return (ServiceComponentRuntime) getService(SCR_SERVICE);
-    }
-
-    private final MetaTypeService getMetaTypeService()
-    {
-        return (MetaTypeService) getService(META_TYPE_NAME);
-    }
 
     private final class RequestInfo
     {
         public final String extension;
         public final ComponentConfigurationDTO component;
         public final boolean componentRequested;
-        public final ServiceComponentRuntime scrService;
         public final List<ComponentDescriptionDTO> descriptions = new ArrayList<ComponentDescriptionDTO>();
         public final List<ComponentConfigurationDTO> configurations = new ArrayList<ComponentConfigurationDTO>();
         public final List<ComponentDescriptionDTO> disabled = new ArrayList<ComponentDescriptionDTO>();
 
         protected RequestInfo(final HttpServletRequest request, final boolean checkPathInfo)
         {
-            this.scrService = getScrService();
-
             String info = request.getPathInfo();
             // remove label and starting slash
             info = info.substring(getLabel().length() + 1);
@@ -598,9 +563,7 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
                 extension = "html"; //$NON-NLS-1$
             }
 
-            if ( scrService != null ) {
-                this.descriptions.addAll(scrService.getComponentDescriptionDTOs());
-            }
+            this.descriptions.addAll(runtime.getComponentDescriptionDTOs());
             if (checkPathInfo && info.length() > 1 && info.startsWith("/")) //$NON-NLS-1$
             {
                 this.componentRequested = true;
@@ -623,13 +586,13 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
 
                 for(final ComponentDescriptionDTO d : this.descriptions)
                 {
-                    if ( !scrService.isComponentEnabled(d) )
+                    if ( !runtime.isComponentEnabled(d) )
                     {
                         disabled.add(d);
                     }
                     else
                     {
-                        final Collection<ComponentConfigurationDTO> configs = scrService.getComponentConfigurationDTOs(d);
+                        final Collection<ComponentConfigurationDTO> configs = runtime.getComponentConfigurationDTOs(d);
                         if ( configs.isEmpty() )
                         {
                             disabled.add(d);
@@ -653,7 +616,7 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
                 final long componentId = Long.parseLong(componentIdPar);
                 for(final ComponentDescriptionDTO desc : this.descriptions)
                 {
-                    for(final ComponentConfigurationDTO cfg : this.scrService.getComponentConfigurationDTOs(desc))
+                    for(final ComponentConfigurationDTO cfg : runtime.getComponentConfigurationDTOs(desc))
                     {
                         if ( cfg.id == componentId )
                         {
@@ -712,7 +675,7 @@ class WebConsolePlugin extends SimpleWebConsolePlugin
                 {
                     if ( d.name.equals(componentName) && (bundleId == -1 || d.bundle.id == bundleId))
                     {
-                        components = scrService.getComponentConfigurationDTOs(d);
+                        components = runtime.getComponentConfigurationDTOs(d);
                         if ( components.isEmpty() )
                         {
                             final ComponentConfigurationDTO cfg = new ComponentConfigurationDTO();

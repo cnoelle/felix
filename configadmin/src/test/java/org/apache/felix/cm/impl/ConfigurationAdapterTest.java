@@ -19,6 +19,11 @@
 package org.apache.felix.cm.impl;
 
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
 import java.io.IOException;
 import java.lang.reflect.Array;
 import java.util.ArrayList;
@@ -26,15 +31,15 @@ import java.util.Collection;
 import java.util.Dictionary;
 import java.util.Hashtable;
 
-import junit.framework.TestCase;
-
 import org.apache.felix.cm.MockPersistenceManager;
 import org.apache.felix.cm.PersistenceManager;
+import org.junit.Test;
+import org.mockito.Mockito;
 import org.osgi.framework.Constants;
 import org.osgi.service.cm.Configuration;
 
 
-public class ConfigurationAdapterTest extends TestCase
+public class ConfigurationAdapterTest
 {
 
     private static final String SCALAR = "scalar";
@@ -45,46 +50,42 @@ public class ConfigurationAdapterTest extends TestCase
     private final String[] ARRAY_VALUE;
 
     private static final String COLLECTION = "collection";
-    private final Collection COLLECTION_VALUE;
+    private final Collection<String> COLLECTION_VALUE;
 
     private static final String TEST_PID = "test.pid";
     private static final String TEST_LOCATION = "test:location";
 
     private final PersistenceManager pm = new MockPersistenceManager();
-    private final MockConfigurationManager configMgr = new MockConfigurationManager()
-    {
-        boolean isActive()
-        {
-            return true;
-        }
-    };
 
     {
         ARRAY_VALUE = new String[]
             { STRING_VALUE };
-        COLLECTION_VALUE = new ArrayList();
+        COLLECTION_VALUE = new ArrayList<>();
         COLLECTION_VALUE.add( STRING_VALUE );
     }
 
 
     private Configuration getConfiguration() throws IOException
     {
+        final ConfigurationManager configMgr = Mockito.mock(ConfigurationManager.class);
+        Mockito.when(configMgr.isActive()).thenReturn(true);
+
         ConfigurationImpl cimpl = new ConfigurationImpl( configMgr, pm, TEST_PID, null, TEST_LOCATION );
         return new ConfigurationAdapter( null, cimpl );
     }
 
 
-    public void testScalar() throws IOException
+    @Test public void testScalar() throws IOException
     {
         Configuration cimpl = getConfiguration();
-        Dictionary props = cimpl.getProperties();
+        Dictionary<String, Object> props = cimpl.getProperties();
         assertNull( "Configuration is fresh", props );
 
-        props = new Hashtable();
+        props = new Hashtable<>();
         props.put( SCALAR, STRING_VALUE );
         cimpl.update( props );
 
-        Dictionary newProps = cimpl.getProperties();
+        Dictionary<String, Object> newProps = cimpl.getProperties();
         assertNotNull( "Configuration is not fresh", newProps );
         assertEquals( "Expect 2 elements", 2, newProps.size() );
         assertEquals( "Service.pid must match", TEST_PID, newProps.get( Constants.SERVICE_PID ) );
@@ -92,18 +93,18 @@ public class ConfigurationAdapterTest extends TestCase
     }
 
 
-    public void testArray() throws IOException
+    @Test public void testArray() throws IOException
     {
         Configuration cimpl = getConfiguration();
 
-        Dictionary props = cimpl.getProperties();
+        Dictionary<String, Object> props = cimpl.getProperties();
         assertNull( "Configuration is fresh", props );
 
-        props = new Hashtable();
+        props = new Hashtable<>();
         props.put( ARRAY, ARRAY_VALUE );
         cimpl.update( props );
 
-        Dictionary newProps = cimpl.getProperties();
+        Dictionary<String, Object> newProps = cimpl.getProperties();
         assertNotNull( "Configuration is not fresh", newProps );
         assertEquals( "Expect 2 elements", 2, newProps.size() );
         assertEquals( "Service.pid must match", TEST_PID, newProps.get( Constants.SERVICE_PID ) );
@@ -118,7 +119,7 @@ public class ConfigurationAdapterTest extends TestCase
         Array.set( testProp, 0, STRING_VALUE2 );
 
         // the array element change must not be reflected in the configuration
-        Dictionary newProps2 = cimpl.getProperties();
+        Dictionary<String, Object> newProps2 = cimpl.getProperties();
         Object testProp2 = newProps2.get( ARRAY );
         assertNotNull( testProp2 );
         assertTrue( testProp2.getClass().isArray() );
@@ -127,18 +128,19 @@ public class ConfigurationAdapterTest extends TestCase
     }
 
 
-    public void testCollection() throws IOException
+    @SuppressWarnings("unchecked")
+    @Test public void testCollection() throws IOException
     {
         Configuration cimpl = getConfiguration();
 
-        Dictionary props = cimpl.getProperties();
+        Dictionary<String, Object> props = cimpl.getProperties();
         assertNull( "Configuration is fresh", props );
 
-        props = new Hashtable();
+        props = new Hashtable<>();
         props.put( COLLECTION, COLLECTION_VALUE );
         cimpl.update( props );
 
-        Dictionary newProps = cimpl.getProperties();
+        Dictionary<String, Object> newProps = cimpl.getProperties();
         assertNotNull( "Configuration is not fresh", newProps );
         assertEquals( "Expect 2 elements", 2, newProps.size() );
         assertEquals( "Service.pid must match", TEST_PID, newProps.get( Constants.SERVICE_PID ) );
@@ -146,7 +148,7 @@ public class ConfigurationAdapterTest extends TestCase
         Object testProp = newProps.get( COLLECTION );
         assertNotNull( testProp );
         assertTrue( testProp instanceof Collection );
-        Collection coll = ( Collection ) testProp;
+        Collection<String> coll = ( Collection<String> ) testProp;
         assertEquals( 1, coll.size() );
         assertEquals( STRING_VALUE, coll.iterator().next() );
 
@@ -155,11 +157,11 @@ public class ConfigurationAdapterTest extends TestCase
         coll.add( STRING_VALUE2 );
 
         // the array element change must not be reflected in the configuration
-        Dictionary newProps2 = cimpl.getProperties();
+        Dictionary<String, Object> newProps2 = cimpl.getProperties();
         Object testProp2 = newProps2.get( COLLECTION );
         assertNotNull( testProp2 );
         assertTrue( testProp2 instanceof Collection );
-        Collection coll2 = ( Collection ) testProp2;
+        Collection<String> coll2 = ( Collection<String> ) testProp2;
         assertEquals( 1, coll2.size() );
         assertEquals( STRING_VALUE, coll2.iterator().next() );
     }

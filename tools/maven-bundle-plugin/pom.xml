@@ -28,7 +28,7 @@
  <modelVersion>4.0.0</modelVersion>
 
  <artifactId>maven-bundle-plugin</artifactId>
- <version>3.3.1-SNAPSHOT</version>
+ <version>3.5.2-SNAPSHOT</version>
  <packaging>maven-plugin</packaging>
 
  <name>Maven Bundle Plugin</name>
@@ -38,6 +38,8 @@
   resources and dependencies. Plus a zillion other features.
   The plugin uses the Bnd tool (http://www.aqute.biz/Code/Bnd)
  </description>
+ 
+ <url>http://felix.apache.org/components/bundle-plugin/</url>
 
  <scm>
      <connection>scm:svn:http://svn.apache.org/repos/asf/felix/trunk/tools/maven-bundle-plugin</connection>
@@ -162,7 +164,7 @@
   <dependency>
     <groupId>biz.aQute.bnd</groupId>
     <artifactId>biz.aQute.bndlib</artifactId>
-    <version>3.3.0</version>
+    <version>3.5.0</version>
   </dependency>
   <dependency>
     <groupId>org.apache.felix</groupId>

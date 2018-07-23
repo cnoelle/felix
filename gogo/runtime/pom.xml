@@ -20,35 +20,38 @@
     <parent>
         <groupId>org.apache.felix</groupId>
         <artifactId>gogo-parent</artifactId>
-        <version>2</version>
+        <version>4</version>
         <relativePath>../gogo-parent/pom.xml</relativePath>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <packaging>bundle</packaging>
     <name>Apache Felix Gogo Runtime</name>
     <artifactId>org.apache.felix.gogo.runtime</artifactId>
-    <version>1.0.7-SNAPSHOT</version>
-    <properties>
-        <!-- Skip because of NPE -->
-        <animal.sniffer.skip>true</animal.sniffer.skip>
-        <felix.java.version>8</felix.java.version>
-    </properties>
+    <version>1.1.1-SNAPSHOT</version>
+    <scm>
+        <connection>scm:svn:http://svn.apache.org/repos/asf/felix/trunk/gogo/runtime</connection>
+        <developerConnection>scm:svn:https://svn.apache.org/repos/asf/felix/trunk/gogo/runtime</developerConnection>
+        <url>http://svn.apache.org/repos/asf/felix/gogo/runtime</url>
+    </scm>
     <dependencies>
         <dependency>
             <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.core</artifactId>
-            <version>4.3.1</version>
+            <artifactId>osgi.core</artifactId>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.compendium</artifactId>
-            <version>4.3.1</version>
+            <artifactId>osgi.cmpn</artifactId>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

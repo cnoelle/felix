@@ -33,12 +33,21 @@ import org.junit.Test;
 public class ReflectiveTest {
 
     @Test
+    public void testDtoAccess() throws Exception {
+        InputStream in = new ByteArrayInputStream(new byte[0]);
+        OutputStream out = new ByteArrayOutputStream();
+        CommandProcessorImpl processor = new CommandProcessorImpl(null);
+        Object result = Reflective.invoke(new CommandSessionImpl(processor, in, out, out), new TheDTO("foo"), "name", Collections.emptyList());
+        assertEquals("foo", result);
+    }
+
+    @Test
     public void testArrayInvocation() throws Exception {
-        assertEquals(new Object[] { 1, "ab" }, invoke("test1", Arrays.<Object>asList(1, "ab")));
-        assertEquals(new String[] { "1", "ab" }, invoke("test2", Arrays.<Object>asList(1, "ab")));
+        assertEquals(new Object[] { 1, "ab" }, invoke("test1", Arrays.asList(1, "ab")));
+        assertEquals(new String[] { "1", "ab" }, invoke("test2", Arrays.asList(1, "ab")));
 
         assertEquals(new Object[] { Arrays.asList(1, 2), "ab" }, invoke("test1", Arrays.asList(Arrays.asList(1, 2), "ab")));
-        assertEquals(new Object[] { new Object[] { 1, 2 }, "ab" }, invoke("test1", Arrays.<Object>asList(new Object[] { 1, 2 }, "ab")));
+        assertEquals(new Object[] { new Object[] { 1, 2 }, "ab" }, invoke("test1", Arrays.asList(new Object[] { 1, 2 }, "ab")));
     }
 
     @Test
@@ -48,16 +57,16 @@ public class ReflectiveTest {
         CommandProcessorImpl processor = new CommandProcessorImpl(null);
         Converter conv = new Converter() {
             @Override
-            public Object convert(Class<?> desiredType, Object in) throws Exception {
+            public Object convert(Class<?> desiredType, Object in) {
                 return null;
             }
             @Override
-            public CharSequence format(Object target, int level, Converter escape) throws Exception {
+            public CharSequence format(Object target, int level, Converter escape) {
                 return null;
             }
         };
         Reflective.invoke(new CommandSessionImpl(processor, in, out, out), processor, "addConverter",
-                Collections.<Object>singletonList(conv));
+                Collections.singletonList(conv));
     }
 
     static class Target {
@@ -101,4 +110,11 @@ public class ReflectiveTest {
         }
     }
 
+    static class TheDTO {
+        public String name;
+
+        public TheDTO(String name) {
+            this.name = name;
+        }
+    }
 }

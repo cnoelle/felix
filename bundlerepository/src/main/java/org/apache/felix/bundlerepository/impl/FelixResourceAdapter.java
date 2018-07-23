@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.felix.utils.resource.CapabilityImpl;
 import org.osgi.framework.namespace.IdentityNamespace;
 import org.osgi.resource.Capability;
 import org.osgi.resource.Requirement;
@@ -41,14 +42,12 @@ public class FelixResourceAdapter implements Resource, RepositoryContent
 
         if (namespace == null || namespace.equals(IdentityNamespace.IDENTITY_NAMESPACE))
         {
-            OSGiCapabilityImpl c = OSGiRepositoryImpl.newOSGiIdentityCapability(resource);
-            c.setResource(this);
+            CapabilityImpl c = OSGiRepositoryImpl.newOSGiIdentityCapability(this, resource);
             result.add(c);
         }
         if (namespace == null || namespace.equals(ContentNamespace.CONTENT_NAMESPACE))
         {
-            OSGiCapabilityImpl c = OSGiRepositoryImpl.newOSGiContentCapability(resource);
-            c.setResource(this);
+            CapabilityImpl c = OSGiRepositoryImpl.newOSGiContentCapability(this, resource);
             result.add(c);
         }
 

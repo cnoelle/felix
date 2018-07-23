@@ -49,6 +49,7 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.felix.gogo.runtime.Reflective;
 import org.apache.felix.service.command.Job;
 import org.apache.felix.service.command.Process;
 import org.apache.felix.gogo.runtime.CommandSessionImpl;
@@ -81,15 +82,15 @@ public class Builtin {
 
     private static final String[] packages = {"java.lang", "java.io", "java.net", "java.util"};
 
-    private final static Set<String> KEYWORDS = new HashSet<String>(
-            Arrays.asList(new String[]{"abstract", "continue", "for", "new", "switch",
+    private final static Set<String> KEYWORDS = new HashSet<>(
+            Arrays.asList("abstract", "continue", "for", "new", "switch",
                     "assert", "default", "goto", "package", "synchronized", "boolean", "do",
                     "if", "private", "this", "break", "double", "implements", "protected",
                     "throw", "byte", "else", "import", "public", "throws", "case", "enum",
                     "instanceof", "return", "transient", "catch", "extends", "int", "short",
                     "try", "char", "final", "interface", "static", "void", "class",
                     "finally", "long", "strictfp", "volatile", "const", "float", "native",
-                    "super", "while"}));
+                    "super", "while"));
 
     public CharSequence format(CommandSession session) {
         return format(session, session.get("_"));    // last result
@@ -121,7 +122,7 @@ public class Builtin {
         if (name instanceof Class<?>) {
             clazz = (Class<?>) name;
         } else {
-            clazz = loadClass(name.toString());
+            clazz = loadClass(session, name.toString());
         }
 
         for (Constructor<?> c : clazz.getConstructors()) {
@@ -161,20 +162,20 @@ public class Builtin {
                 + " to any of " + Arrays.asList(clazz.getConstructors()));
     }
 
-    private Class<?> loadClass(String name) throws ClassNotFoundException {
+    private Class<?> loadClass(CommandSession session, String name) throws ClassNotFoundException {
         if (!name.contains(".")) {
             for (String p : packages) {
                 String pkg = p + "." + name;
                 try {
-                    return Class.forName(pkg);
+                    return Class.forName(pkg, true, session.classLoader());
                 } catch (ClassNotFoundException e) {
                 }
             }
         }
-        return Class.forName(name);
+        return Class.forName(name, true, session.classLoader());
     }
 
-    public void set(CommandSession session, String[] argv) throws Exception {
+    public void set(CommandSession session, String[] argv) {
         final String[] usage = {
                 "set - show session variables",
                 "Usage: set [OPTIONS] [PREFIX]",
@@ -201,7 +202,7 @@ public class Builtin {
             session.put("echo", null);
         } else {
             boolean all = opt.isSet("all");
-            for (String key : new TreeSet<String>(Shell.getVariables(session))) {
+            for (String key : new TreeSet<>(Shell.getVariables(session))) {
                 if (!key.startsWith(prefix))
                     continue;
 
@@ -213,7 +214,7 @@ public class Builtin {
                 String value = null;
 
                 if (target != null) {
-                    Class<? extends Object> clazz = target.getClass();
+                    Class<?> clazz = target.getClass();
                     type = clazz.getSimpleName();
                     value = target.toString();
                 }
@@ -268,7 +269,7 @@ public class Builtin {
         ArrayList<String> list = null;
 
         if (opt.isSet("list")) {
-            list = new ArrayList<String>();
+            list = new ArrayList<>();
         }
 
         boolean first = true;
@@ -333,7 +334,7 @@ public class Builtin {
         }
 
         if (optScope != null || (args.isEmpty() && all)) {
-            Set<String> snames = new TreeSet<String>();
+            Set<String> snames = new TreeSet<>();
 
             for (String sname : (getCommands(session))) {
                 if ((optScope == null) || sname.startsWith(optScope)) {
@@ -349,7 +350,7 @@ public class Builtin {
         }
 
         if (args.size() == 0) {
-            Map<String, Integer> scopes = new TreeMap<String, Integer>();
+            Map<String, Integer> scopes = new TreeMap<>();
 
             for (String sname : getCommands(session)) {
                 int colon = sname.indexOf(':');
@@ -374,7 +375,7 @@ public class Builtin {
         final String MAIN = "_main"; // FIXME: must match Reflective.java
 
         StringBuilder buf = new StringBuilder();
-        Set<String> cmds = new LinkedHashSet<String>();
+        Set<String> cmds = new LinkedHashSet<>();
 
         // get all commands
         if ((colon != -1) || (session.get(name) != null)) {
@@ -621,7 +622,7 @@ public class Builtin {
             target = method.invoke(target, (Object[]) null);
         }
 
-        ArrayList<Method> list = new ArrayList<Method>();
+        ArrayList<Method> list = new ArrayList<>();
         Class<?> tc = (target instanceof Class<?>) ? (Class<?>) target
                 : target.getClass();
         Method[] methods = tc.getMethods();
@@ -722,12 +723,7 @@ public class Builtin {
             type = "";
             suffix = "";
         }
-        String col = Posix.getLsColorMap(session).get(type);
-        if (col != null && !col.isEmpty()) {
-            return "\033[" + col + "m" + path.getFileName().toString() + "\033[m" + suffix;
-        } else {
-            return path.getFileName().toString() + suffix;
-        }
+        return Posix.applyStyle(path.getFileName().toString(), Posix.getLsColorMap(session), type) + suffix;
 
     }
 

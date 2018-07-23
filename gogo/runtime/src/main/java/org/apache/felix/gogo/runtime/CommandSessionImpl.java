@@ -86,11 +86,12 @@ public class CommandSessionImpl implements CommandSession, Converter
     private final ExecutorService executor;
 
     private Path currentDir;
+    private ClassLoader classLoader;
 
     protected CommandSessionImpl(CommandProcessorImpl shell, CommandSessionImpl parent)
     {
         this.currentDir = parent.currentDir;
-        this.executor = Executors.newCachedThreadPool();
+        this.executor = Executors.newCachedThreadPool(ThreadUtils.namedThreadFactory("session"));
         this.processor = shell;
         this.channels = parent.channels;
         this.in = parent.in;
@@ -139,6 +140,16 @@ public class CommandSessionImpl implements CommandSession, Converter
     public void currentDir(Path path)
     {
         currentDir = path;
+    }
+
+    public ClassLoader classLoader()
+    {
+        return classLoader != null ? classLoader : getClass().getClassLoader();
+    }
+
+    public void classLoader(ClassLoader classLoader)
+    {
+        this.classLoader = classLoader;
     }
 
     public void close()
@@ -468,6 +479,17 @@ public class CommandSessionImpl implements CommandSession, Converter
 
     public Object doConvert(Class<?> desiredType, Object in)
     {
+        if (desiredType == Class.class)
+        {
+            try
+            {
+                return Class.forName(in.toString(), true, classLoader());
+            }
+            catch (ClassNotFoundException e)
+            {
+                return null;
+            }
+        }
         return processor.doConvert(desiredType, in);
     }
 
@@ -488,12 +510,22 @@ public class CommandSessionImpl implements CommandSession, Converter
         return processor.expr(this, expr);
     }
 
+    public Object invoke(Object target, String name, List<Object> args) throws Exception
+    {
+        return processor.invoke(this, target, name, args);
+    }
+
+    public Path redirect(Path path, int mode)
+    {
+        return processor.redirect(this, path, mode);
+    }
+
     @Override
     public List<Job> jobs()
     {
         synchronized (jobs)
         {
-            return Collections.<Job>unmodifiableList(jobs);
+            return Collections.unmodifiableList(jobs);
         }
     }
 
@@ -770,7 +802,7 @@ public class CommandSessionImpl implements CommandSession, Converter
 
         public List<Process> processes()
         {
-            return Collections.<Process>unmodifiableList(pipes);
+            return Collections.unmodifiableList(pipes);
         }
 
         @Override
@@ -787,7 +819,7 @@ public class CommandSessionImpl implements CommandSession, Converter
             {
                 thread.setName("job controller " + id);
 
-                List<Callable<Result>> wrapped = new ArrayList<Callable<Result>>(pipes);
+                List<Callable<Result>> wrapped = new ArrayList<>(pipes);
                 List<Future<Result>> results = executor.invokeAll(wrapped);
 
                 // Get pipe exceptions

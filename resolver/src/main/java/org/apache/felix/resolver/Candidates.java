@@ -24,11 +24,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.felix.resolver.ResolverImpl.PermutationType;
 import org.apache.felix.resolver.ResolverImpl.ResolveSession;
+import org.apache.felix.resolver.reason.ReasonException;
 import org.apache.felix.resolver.util.*;
 import org.osgi.framework.Version;
 import org.osgi.framework.namespace.*;
 import org.osgi.resource.*;
 import org.osgi.service.resolver.HostedCapability;
+import org.osgi.service.resolver.ResolutionException;
 import org.osgi.service.resolver.ResolveContext;
 
 class Candidates
@@ -184,17 +186,15 @@ class Candidates
                 addCandidates(result.candidates);
                 result.candidates = null;
                 result.remaining = null;
-                if ((rc instanceof FelixResolveContext) && !Util.isFragment(resource))
+                Collection<Resource> relatedResources = rc.findRelatedResources(resource);
+                m_session.setRelatedResources(resource, relatedResources);
+                for (Resource relatedResource : relatedResources)
                 {
-                    Collection<Resource> ondemandFragments = ((FelixResolveContext) rc).getOndemandResources(resource);
-                    for (Resource fragment : ondemandFragments)
+                    if (m_session.isValidRelatedResource(relatedResource))
                     {
-                        if (m_session.isValidOnDemandResource(fragment))
-                        {
-                            // This resource is a valid on demand resource;
-                            // populate it now, consider it optional
-                            toPopulate.addFirst(fragment);
-                        }
+                        // This resource is a valid related resource;
+                        // populate it now, consider it optional
+                        toPopulate.addFirst(relatedResource);
                     }
                 }
                 continue;
@@ -1237,14 +1237,14 @@ class Candidates
                         for (Requirement dependent : dependents)
                         {
                             CandidateSelector dependentSelector = m_candidateMap.get(
-                                dependent);
+                                    dependent);
                             // If the dependent selector only has one capability left then check if
                             // the current candidate is the selector's current candidate.
                             if (dependentSelector != null
-                                && dependentSelector.getRemainingCandidateCount() <= 1)
+                                    && dependentSelector.getRemainingCandidateCount() <= 1)
                             {
                                 if (current.equals(
-                                    dependentSelector.getCurrentCandidate()))
+                                        dependentSelector.getCurrentCandidate()))
                                 {
                                     // return false since we do not want to allow this requirement
                                     // to substitute the capability
@@ -1276,6 +1276,11 @@ class Candidates
             return Collections.singleton(requirement);
         }
 
+        @Override
+        public ResolutionException toException() {
+            return new ReasonException(ReasonException.Reason.DynamicImport, getMessage(), null, getUnresolvedRequirements());
+        }
+
     }
 
     static class FragmentNotSelectedError extends ResolutionError {
@@ -1288,6 +1293,16 @@ class Candidates
 
         public String getMessage() {
             return "Fragment was not selected for attachment: " + resource;
+        }
+
+        @Override
+        public Collection<Requirement> getUnresolvedRequirements() {
+            return resource.getRequirements(HostNamespace.HOST_NAMESPACE);
+        }
+
+        @Override
+        public ResolutionException toException() {
+            return new ReasonException(ReasonException.Reason.FragmentNotSelected, getMessage(), null, getUnresolvedRequirements());
         }
 
     }
@@ -1318,6 +1333,12 @@ class Candidates
 
         public Collection<Requirement> getUnresolvedRequirements() {
             return Collections.singleton(requirement);
+        }
+
+        @Override
+        public ResolutionException toException() {
+            return new ReasonException(
+                ReasonException.Reason.MissingRequirement, getMessage(), cause != null ? cause.toException() : null, getUnresolvedRequirements());
         }
 
     }

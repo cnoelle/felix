@@ -73,6 +73,7 @@
         <module>tools/org.apache.felix.scr.bnd</module>
         <module>tools/org.apache.felix.scr.ds-annotations</module>
         <module>tools/org.apache.felix.scr.generator</module>
+        <module>tools/osgicheck-maven-plugin</module>
 
         <module>transaction</module>
         <module>upnp</module>
@@ -94,5 +95,8 @@
         <module>webconsole-plugins/upnp</module>
         <module>webconsole-plugins/useradmin</module>
         <module>wireadmin</module>
+        <module>fileinstall-plugins/resolver</module>
+        <module>fileinstall-plugins/installer</module>
+        <module>fileinstall-plugins/installer.test</module>
     </modules>
 </project>

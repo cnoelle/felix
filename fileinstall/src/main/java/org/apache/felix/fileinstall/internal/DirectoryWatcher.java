@@ -42,6 +42,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
+import java.util.regex.Pattern;
 
 import org.apache.felix.fileinstall.ArtifactInstaller;
 import org.apache.felix.fileinstall.ArtifactListener;
@@ -138,6 +139,7 @@ public class DirectoryWatcher extends Thread implements BundleListener
     String fragmentScope;
     String optionalScope;
     boolean disableNio2;
+    int frameworkStartLevel;
 
     // Map of all installed artifacts
     final Map<File, Artifact> currentManagedArtifacts = new HashMap<File, Artifact>();
@@ -503,20 +505,25 @@ public class DirectoryWatcher extends Thread implements BundleListener
             }
         }
 
-        if (startBundles && isStateChanged())
-        {
-            // Try to start all the bundles that are not persistently stopped
-            startAllBundles();
-            
-            delayedStart.addAll(installedBundles);
-            delayedStart.removeAll(uninstalledBundles);
-            // Try to start newly installed bundles, or bundles which we missed on a previous round
-            startBundles(delayedStart);
-            consistentlyFailingBundles.clear();
-            consistentlyFailingBundles.addAll(delayedStart);
+        if (startBundles) {
+            int startLevel = systemBundle.adapt(FrameworkStartLevel.class).getStartLevel();
+            boolean doStart = isStateChanged() || startLevel != frameworkStartLevel;
+            frameworkStartLevel = startLevel;
+            if (doStart)
+            {
+                // Try to start all the bundles that are not persistently stopped
+                startAllBundles();
 
-            // set the state as unchanged to not reattempt starting failed bundles
-            setStateChanged(false);
+                delayedStart.addAll(installedBundles);
+                delayedStart.removeAll(uninstalledBundles);
+                // Try to start newly installed bundles, or bundles which we missed on a previous round
+                startBundles(delayedStart);
+                consistentlyFailingBundles.clear();
+                consistentlyFailingBundles.addAll(delayedStart);
+
+                // set the state as unchanged to not reattempt starting failed bundles
+                setStateChanged(false);
+            }
         }
     }
 
@@ -804,6 +811,7 @@ public class DirectoryWatcher extends Thread implements BundleListener
         Bundle[] bundles = this.context.getBundles();
         String watchedDirPath = watchedDirectory.toURI().normalize().getPath();
         Map<File, Long> checksums = new HashMap<File, Long>();
+        Pattern filePattern = filter == null || filter.isEmpty() ? null : Pattern.compile(filter);
         for (Bundle bundle : bundles) {
             // Convert to a URI because the location of a bundle
             // is typically a URI. At least, that's the case for
@@ -849,13 +857,16 @@ public class DirectoryWatcher extends Thread implements BundleListener
             }
             final int index = path.lastIndexOf('/');
             if (index != -1 && path.startsWith(watchedDirPath)) {
-                Artifact artifact = new Artifact();
-                artifact.setBundleId(bundle.getBundleId());
-                artifact.setChecksum(Util.loadChecksum(bundle, context));
-                artifact.setListener(null);
-                artifact.setPath(new File(path));
-                setArtifact(new File(path), artifact);
-                checksums.put(new File(path), artifact.getChecksum());
+                final String fileName = path.substring(index + 1);
+                if (filePattern == null || filePattern.matcher(fileName).matches()) {
+                    Artifact artifact = new Artifact();
+                    artifact.setBundleId(bundle.getBundleId());
+                    artifact.setChecksum(Util.loadChecksum(bundle, context));
+                    artifact.setListener(null);
+                    artifact.setPath(new File(path));
+                    setArtifact(new File(path), artifact);
+                    checksums.put(new File(path), artifact.getChecksum());
+                }
             }
         }
         scanner.initialize(checksums);
@@ -1233,7 +1244,6 @@ public class DirectoryWatcher extends Thread implements BundleListener
       */
     private boolean startBundle(Bundle bundle, boolean logFailures)
     {
-        FrameworkStartLevel startLevelSvc = systemBundle.adapt(FrameworkStartLevel.class);
         // Fragments can never be started.
         // Bundles can only be started transient when the start level of the framework is high
         // enough. Persistent (i.e. non-transient) starts will simply make the framework start the
@@ -1241,7 +1251,7 @@ public class DirectoryWatcher extends Thread implements BundleListener
         if (startBundles
                 && bundle.getState() != Bundle.UNINSTALLED
                 && !isFragment(bundle)
-                && startLevelSvc.getStartLevel() >= bundle.adapt(BundleStartLevel.class).getStartLevel())
+                && frameworkStartLevel >= bundle.adapt(BundleStartLevel.class).getStartLevel())
         {
             try
             {

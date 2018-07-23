@@ -18,36 +18,21 @@
  */
 package org.apache.felix.framework;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.InetAddress;
-import java.net.URL;
-import java.net.URLConnection;
-import java.net.URLStreamHandler;
-import java.security.AllPermission;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Dictionary;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.NoSuchElementException;
-import java.util.Set;
-
 import org.apache.felix.framework.cache.Content;
+import org.apache.felix.framework.cache.DirectoryContent;
+import org.apache.felix.framework.cache.JarContent;
+import org.apache.felix.framework.ext.ClassPathExtenderFactory;
+import org.apache.felix.framework.util.ClassParser;
 import org.apache.felix.framework.util.FelixConstants;
-import org.apache.felix.framework.util.ImmutableList;
 import org.apache.felix.framework.util.StringMap;
 import org.apache.felix.framework.util.Util;
 import org.apache.felix.framework.util.manifestparser.ManifestParser;
 import org.apache.felix.framework.util.manifestparser.NativeLibrary;
 import org.apache.felix.framework.util.manifestparser.NativeLibraryClause;
 import org.apache.felix.framework.wiring.BundleCapabilityImpl;
+import org.apache.felix.framework.wiring.BundleRequirementImpl;
 import org.apache.felix.framework.wiring.BundleWireImpl;
+import org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement;
 import org.osgi.framework.AdminPermission;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleActivator;
@@ -56,6 +41,10 @@ import org.osgi.framework.BundleException;
 import org.osgi.framework.Constants;
 import org.osgi.framework.FrameworkEvent;
 import org.osgi.framework.Version;
+import org.osgi.framework.namespace.BundleNamespace;
+import org.osgi.framework.namespace.ExecutionEnvironmentNamespace;
+import org.osgi.framework.namespace.HostNamespace;
+import org.osgi.framework.namespace.IdentityNamespace;
 import org.osgi.framework.namespace.NativeNamespace;
 import org.osgi.framework.wiring.BundleCapability;
 import org.osgi.framework.wiring.BundleRequirement;
@@ -63,86 +52,125 @@ import org.osgi.framework.wiring.BundleRevision;
 import org.osgi.framework.wiring.BundleWire;
 import org.osgi.framework.wiring.BundleWiring;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.net.URI;
+import java.net.URL;
+import java.security.AccessController;
+import java.security.AllPermission;
+import java.security.PrivilegedExceptionAction;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.NoSuchElementException;
+import java.util.Properties;
+import java.util.ServiceLoader;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.concurrent.CopyOnWriteArrayList;
+
 /**
- * The ExtensionManager class is used in several ways.
- * <p>
- * First, a private instance is added (as URL with the instance as
- * URLStreamHandler) to the classloader that loaded the class.
- * It is assumed that this is an instance of URLClassloader (if not extension
- * bundles will not work). Subsequently, extension bundles can be managed by
- * instances of this class (their will be one instance per framework instance).
- * </p>
- * <p>
- * Second, it is used as module definition of the systembundle. Added extension
- * bundles with exported packages will contribute their exports to the
- * systembundle export.
- * </p>
- * <p>
- * Third, it is used as content loader of the systembundle. Added extension
+ * The ExtensionManager class is used as content loader of the systembundle. Added extension
  * bundles exports will be available via this loader.
- * </p>
  */
-// The general approach is to have one private static instance that we register
-// with the parent classloader and one instance per framework instance that
-// keeps track of extension bundles and systembundle exports for that framework
-// instance.
-class ExtensionManager extends URLStreamHandler implements Content
+class ExtensionManager implements Content
 {
-    // The private instance that is added to Felix.class.getClassLoader() -
-    // will be null if extension bundles are not supported (i.e., we are not
-    // loaded by an instance of URLClassLoader)
-    static final ExtensionManager m_extensionManager;
+    static final ClassPathExtenderFactory.ClassPathExtender m_extenderFramework;
+    static final ClassPathExtenderFactory.ClassPathExtender m_extenderBoot;
+    private static final Set<String> IDENTITY = new HashSet<String>(Arrays.asList(
+        BundleNamespace.BUNDLE_NAMESPACE,
+        HostNamespace.HOST_NAMESPACE,
+        IdentityNamespace.IDENTITY_NAMESPACE));
 
     static
     {
-        // pre-init the url sub-system as otherwise we don't work on gnu/classpath
-        ExtensionManager extensionManager = null;
+        ClassPathExtenderFactory.ClassPathExtender extenderFramework = null;
+        ClassPathExtenderFactory.ClassPathExtender extenderBoot = null;
 
-        if (!"true".equalsIgnoreCase(Felix.m_secureAction.getSystemProperty(
-            FelixConstants.FELIX_EXTENSIONS_DISABLE, "false")))
+        if (!"true".equalsIgnoreCase(Felix.m_secureAction.getSystemProperty(FelixConstants.FELIX_EXTENSIONS_DISABLE, "false")))
         {
-            try
+            ServiceLoader<ClassPathExtenderFactory> loader = ServiceLoader.load(ClassPathExtenderFactory.class,
+                ExtensionManager.class.getClassLoader());
+
+
+            for (Iterator<ClassPathExtenderFactory> iter = loader.iterator();
+                 iter.hasNext() && (extenderFramework == null || extenderBoot == null); )
             {
-                (new URL("http://felix.extensions:9/")).openConnection();
-            }
-            catch (Throwable t)
-            {
-                // This doesn't matter much - we only need the above to init the url subsystem
+                try
+                {
+                    ClassPathExtenderFactory factory = iter.next();
+
+                    if (extenderFramework == null)
+                    {
+                        try
+                        {
+                            extenderFramework = factory.getExtender(ExtensionManager.class.getClassLoader());
+                        }
+                        catch (Throwable t)
+                        {
+                            // Ignore
+                        }
+                    }
+                    if (extenderBoot == null)
+                    {
+                        try
+                        {
+                            extenderBoot = factory.getExtender(null);
+                        }
+                        catch (Throwable t)
+                        {
+                            // Ignore
+                        }
+                    }
+                }
+                catch (Throwable t)
+                {
+                    // Ignore
+                }
             }
 
-            // We use the secure action of Felix to add a new instance to the parent
-            // classloader.
             try
             {
-                extensionManager = new ExtensionManager();
-
-                Felix.m_secureAction.addURLToURLClassLoader(Felix.m_secureAction.createURL(
-                    Felix.m_secureAction.createURL(null, "http:", extensionManager),
-                    "http://felix.extensions:9/", extensionManager),
-                    Felix.class.getClassLoader());
+                if (extenderFramework == null)
+                {
+                    extenderFramework = new ClassPathExtenderFactory.DefaultClassLoaderExtender()
+                            .getExtender(ExtensionManager.class.getClassLoader());
+                }
             }
-            catch (Throwable ex)
-            {
-                // extension bundles will not be supported.
-                extensionManager = null;
+            catch (Throwable t) {
+                // Ignore
             }
         }
 
-        m_extensionManager = extensionManager;
+        m_extenderFramework = extenderFramework;
+        m_extenderBoot = extenderBoot;
     }
 
     private final Logger m_logger;
-    private final Map m_configMap;
-    private final Map m_headerMap = new StringMap();
-    private final BundleRevisionImpl m_systemBundleRevision;
-    private volatile List<BundleCapability> m_capabilities = Collections.EMPTY_LIST;
-    private volatile Set<String> m_exportNames = Collections.EMPTY_SET;
-    private volatile Object m_securityContext = null;
-    private final List m_extensions;
-    private volatile Bundle[] m_extensionsCache;
-    private final Set m_names;
-    private final Map m_sourceToExtensions;
+    private volatile ExtensionManagerRevision m_systemBundleRevision;
+
     private final List<ExtensionTuple> m_extensionTuples = Collections.synchronizedList(new ArrayList<ExtensionTuple>());
+
+    private final List<BundleRevisionImpl> m_resolvedExtensions = new CopyOnWriteArrayList<BundleRevisionImpl>();
+    private final List<BundleRevisionImpl> m_unresolvedExtensions = new CopyOnWriteArrayList<BundleRevisionImpl>();
+    private final List<BundleRevisionImpl> m_failedExtensions = new CopyOnWriteArrayList<BundleRevisionImpl>();
 
     private static class ExtensionTuple
     {
@@ -156,20 +184,6 @@ class ExtensionManager extends URLStreamHandler implements Content
             m_activator = activator;
             m_bundle = bundle;
         }
-
-    }
-
-    // This constructor is only used for the private instance added to the parent
-    // classloader.
-    private ExtensionManager()
-    {
-        m_logger = null;
-        m_configMap = null;
-        m_systemBundleRevision = null;
-        m_extensions = new ArrayList();
-        m_extensionsCache = new Bundle[0];
-        m_names = new HashSet();
-        m_sourceToExtensions = new HashMap();
     }
 
     /**
@@ -180,98 +194,23 @@ class ExtensionManager extends URLStreamHandler implements Content
      * instance.
      *
      * @param logger the logger to use.
-     * @param config the configuration to read properties from.
-     * @param systemBundleInfo the info to change if we need to add exports.
      */
     ExtensionManager(Logger logger, Map configMap, Felix felix)
     {
         m_logger = logger;
-        m_configMap = configMap;
-        m_systemBundleRevision = new ExtensionManagerRevision(felix);
-        m_extensions = null;
-        m_extensionsCache = null;
-        m_names = null;
-        m_sourceToExtensions = null;
 
-// TODO: FRAMEWORK - Not all of this stuff really belongs here, probably only exports.
-        // Populate system bundle header map.
-        m_headerMap.put(FelixConstants.BUNDLE_VERSION,
-            m_configMap.get(FelixConstants.FELIX_VERSION_PROPERTY));
-        m_headerMap.put(FelixConstants.BUNDLE_SYMBOLICNAME,
-            FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME);
-        m_headerMap.put(FelixConstants.BUNDLE_NAME, "System Bundle");
-        m_headerMap.put(FelixConstants.BUNDLE_DESCRIPTION,
-            "This bundle is system specific; it implements various system services.");
-        m_headerMap.put(FelixConstants.EXPORT_SERVICE,
-            "org.osgi.service.packageadmin.PackageAdmin," +
-            "org.osgi.service.startlevel.StartLevel," +
-            "org.osgi.service.url.URLHandlers");
-
-        // The system bundle exports framework packages as well as
-        // arbitrary user-defined packages from the system class path.
-        // We must construct the system bundle's export metadata.
-        // Get configuration property that specifies which class path
-        // packages should be exported by the system bundle.
-        String syspkgs =
-            (String) m_configMap.get(FelixConstants.FRAMEWORK_SYSTEMPACKAGES);
-        // If no system packages were specified, load our default value.
-        syspkgs = (syspkgs == null)
-            ? Util.getDefaultProperty(logger, Constants.FRAMEWORK_SYSTEMPACKAGES)
-            : syspkgs;
-        syspkgs = (syspkgs == null) ? "" : syspkgs;
-        // If any extra packages are specified, then append them.
-        String pkgextra =
-            (String) m_configMap.get(FelixConstants.FRAMEWORK_SYSTEMPACKAGES_EXTRA);
-        syspkgs = ((pkgextra == null) || (pkgextra.trim().length() == 0))
-            ? syspkgs : syspkgs + "," + pkgextra;
-        m_headerMap.put(FelixConstants.BUNDLE_MANIFESTVERSION, "2");
-        m_headerMap.put(FelixConstants.EXPORT_PACKAGE, syspkgs);
-
-        // The system bundle alsp provides framework generic capabilities
-        // as well as arbitrary user-defined generic capabilities. We must
-        // construct the system bundle's capabilitie metadata. Get the
-        // configuration property that specifies which capabilities should
-        // be provided by the system bundle.
-        String syscaps =
-            (String) m_configMap.get(FelixConstants.FRAMEWORK_SYSTEMCAPABILITIES);
-        // If no system capabilities were specified, load our default value.
-        syscaps = (syscaps == null)
-            ? Util.getDefaultProperty(logger, Constants.FRAMEWORK_SYSTEMCAPABILITIES)
-            : syscaps;
-        syscaps = (syscaps == null) ? "" : syscaps;
-        // If any extra capabilities are specified, then append them.
-        String capextra =
-            (String) m_configMap.get(FelixConstants.FRAMEWORK_SYSTEMCAPABILITIES_EXTRA);
-        syscaps = ((capextra == null) || (capextra.trim().length() == 0))
-            ? syscaps : syscaps + "," + capextra;
-        m_headerMap.put(FelixConstants.PROVIDE_CAPABILITY, syscaps);
-        try
-        {
-            ManifestParser mp = new ManifestParser(
-                m_logger, m_configMap, m_systemBundleRevision, m_headerMap);
-            List<BundleCapability> caps = aliasSymbolicName(mp.getCapabilities());
-            caps.add(buildNativeCapabilites());
-            appendCapabilities(caps);
-        }
-        catch (Exception ex)
-        {
-            m_capabilities = Collections.EMPTY_LIST;
-            m_logger.log(
-                Logger.LOG_ERROR,
-                "Error parsing system bundle export statement: "
-                + syspkgs, ex);
-        }
+        m_systemBundleRevision = new ExtensionManagerRevision(configMap, felix);
     }
 
-    protected BundleCapability buildNativeCapabilites() {
-        String osArchitecture = (String)m_configMap.get(FelixConstants.FRAMEWORK_PROCESSOR);
-        String osName = (String)m_configMap.get(FelixConstants.FRAMEWORK_OS_NAME);
-        String osVersion = (String)m_configMap.get(FelixConstants.FRAMEWORK_OS_VERSION);
-        String userLang = (String)m_configMap.get(FelixConstants.FRAMEWORK_LANGUAGE);
+    protected BundleCapability buildNativeCapabilites(BundleRevisionImpl revision, Map configMap) {
+        String osArchitecture = (String) configMap.get(FelixConstants.FRAMEWORK_PROCESSOR);
+        String osName = (String) configMap.get(FelixConstants.FRAMEWORK_OS_NAME);
+        String osVersion = (String) configMap.get(FelixConstants.FRAMEWORK_OS_VERSION);
+        String userLang = (String) configMap.get(FelixConstants.FRAMEWORK_LANGUAGE);
         Map<String, Object> attributes = new HashMap<String, Object>();
-        
+
         //Add all startup properties so we can match selection-filters
-        attributes.putAll(m_configMap);
+        attributes.putAll(configMap);
 
         if( osArchitecture != null )
         {
@@ -293,84 +232,155 @@ class ExtensionManager extends URLStreamHandler implements Content
             attributes.put(NativeNamespace.CAPABILITY_LANGUAGE_ATTRIBUTE, userLang);
         }
 
-        return new BundleCapabilityImpl(getRevision(), NativeNamespace.NATIVE_NAMESPACE, Collections.<String, String> emptyMap(), attributes);
+        return new BundleCapabilityImpl(revision, NativeNamespace.NATIVE_NAMESPACE, Collections.<String, String> emptyMap(), attributes);
     }
 
-    private static List<BundleCapability> aliasSymbolicName(List<BundleCapability> caps)
+    @IgnoreJRERequirement
+    void updateRevision(Felix felix, Map configMap)
     {
-        if (caps == null)
+        Map config = new HashMap(configMap);
+        Properties defaultProperties = Util.loadDefaultProperties(m_logger);
+
+        Util.initializeJPMSEE(felix._getProperty("java.specification.version"), defaultProperties, m_logger);
+
+        String sysprops = felix._getProperty(Constants.FRAMEWORK_SYSTEMPACKAGES);
+
+        final Map<String, Set<String>> exports = Util.initializeJPMS(defaultProperties);
+
+        if (exports != null && (sysprops == null || "true".equalsIgnoreCase(felix._getProperty(FelixConstants.USE_PROPERTY_SUBSTITUTION_IN_SYSTEMPACKAGES))))
         {
-            return new ArrayList<BundleCapability>(0);
-        }
-
-        List<BundleCapability> aliasCaps = new ArrayList<BundleCapability>(caps);
-
-        String[] aliases = {
-            FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME,
-            Constants.SYSTEM_BUNDLE_SYMBOLICNAME };
-
-        for (int capIdx = 0; capIdx < aliasCaps.size(); capIdx++)
-        {
-            BundleCapability cap = aliasCaps.get(capIdx);
-
-            // Need to alias bundle and host capabilities.
-            if (cap.getNamespace().equals(BundleRevision.BUNDLE_NAMESPACE)
-                || cap.getNamespace().equals(BundleRevision.HOST_NAMESPACE))
+            java.nio.file.FileSystem fs = java.nio.file.FileSystems.getFileSystem(URI.create("jrt:/"));
+            final ClassParser classParser = new ClassParser();
+            final Set<String> imports = new HashSet<String>();
+            for (Set<String> moduleImport : exports.values())
             {
-                // Make a copy of the attribute array.
-                Map<String, Object> aliasAttrs =
-                    new HashMap<String, Object>(cap.getAttributes());
-                // Add the aliased value.
-                aliasAttrs.put(cap.getNamespace(), aliases);
-                // Create the aliased capability to replace the old capability.
-                cap = new BundleCapabilityImpl(
-                    cap.getRevision(),
-                    cap.getNamespace(),
-                    cap.getDirectives(),
-                    aliasAttrs);
-                aliasCaps.set(capIdx, cap);
-            }
-
-            // Further, search attributes for bundle symbolic name and alias it too.
-            for (Entry<String, Object> entry : cap.getAttributes().entrySet())
-            {
-                // If there is a bundle symbolic name attribute, add the
-                // standard alias as a value.
-                if (entry.getKey().equalsIgnoreCase(Constants.BUNDLE_SYMBOLICNAME_ATTRIBUTE))
+                for (String pkg : moduleImport)
                 {
-                    // Make a copy of the attribute array.
-                    Map<String, Object> aliasAttrs =
-                        new HashMap<String, Object>(cap.getAttributes());
-                    // Add the aliased value.
-                    aliasAttrs.put(Constants.BUNDLE_SYMBOLICNAME_ATTRIBUTE, aliases);
-                    // Create the aliased capability to replace the old capability.
-                    aliasCaps.set(capIdx, new BundleCapabilityImpl(
-                        cap.getRevision(),
-                        cap.getNamespace(),
-                        cap.getDirectives(),
-                        aliasAttrs));
-                    // Continue with the next capability.
-                    break;
+                    if (!pkg.startsWith("java."))
+                    {
+                        imports.add(pkg);
+                    }
+                }
+            }
+            for (final String moduleKey : exports.keySet())
+            {
+                int idx = moduleKey.indexOf("@");
+                String module = idx == -1 ? moduleKey : moduleKey.substring(0, idx);
+                if (felix._getProperty(module) == null && !exports.get(moduleKey).isEmpty() && defaultProperties.getProperty(module) == null)
+                {
+                    final SortedMap<String, SortedSet<String>> referred = new TreeMap<String, SortedSet<String>>();
+                    if ("true".equalsIgnoreCase(felix._getProperty(FelixConstants.CALCULATE_SYSTEMPACKAGES_USES)))
+                    {
+                        try
+                        {
+                            Properties cachedProps = new Properties();
+                            File modulesDir = felix.getDataFile(felix, "modules");
+                            modulesDir.mkdirs();
+                            File cached = new File(modulesDir, moduleKey + ".properties");
+                            if (cached.isFile())
+                            {
+                                FileInputStream input = new FileInputStream(cached);
+                                cachedProps.load(new InputStreamReader(input, "UTF-8"));
+                                input.close();
+                                for (Enumeration<?> keys = cachedProps.propertyNames(); keys.hasMoreElements();)
+                                {
+                                    String pkg = (String) keys.nextElement();
+                                    referred.put(pkg, new TreeSet<String>(Arrays.asList(cachedProps.getProperty(pkg).split(","))));
+                                }
+                            }
+                            else
+                            {
+                                java.nio.file.Path path = fs.getPath("modules", module.substring("felix.jpms.".length()));
+                                java.nio.file.Files.walkFileTree(path, (java.nio.file.FileVisitor) Felix.class.getClassLoader().loadClass("org.apache.felix.framework.util.ClassFileVisitor")
+                                    .getConstructor(Set.class, Set.class, ClassParser.class, SortedMap.class).newInstance(imports, exports.get(moduleKey), classParser, referred));
+                                for (String pkg : referred.keySet())
+                                {
+                                    SortedSet<String> uses = referred.get(pkg);
+                                    if (uses != null && !uses.isEmpty())
+                                    {
+                                        cachedProps.setProperty(pkg, String.join(",", uses));
+                                    }
+                                }
+                                OutputStream output = new FileOutputStream(cached);
+                                cachedProps.store(new OutputStreamWriter(output, "UTF-8"), null);
+                                output.close();
+                            }
+                        }
+                        catch (Throwable e)
+                        {
+                            m_logger.log(Logger.LOG_WARNING, "Exception calculating JPMS module exports", e);
+                        }
+                    }
+
+                    String pkgs = "";
+
+                    for (String pkg : exports.get(moduleKey))
+                    {
+                        pkgs += "," + pkg;
+                        SortedSet<String> uses = referred.get(pkg);
+                        if (uses != null && !uses.isEmpty())
+                        {
+                            pkgs += ";uses:=\"";
+                            String sep = "";
+                            for (String u : uses)
+                            {
+                                pkgs += sep + u;
+                                sep = ",";
+                            }
+                            pkgs += "\"";
+                        }
+                        pkgs += ";version=\"" + defaultProperties.getProperty("felix.detect.java.version") + "\"";
+                    }
+                    defaultProperties.put(module, pkgs);
                 }
             }
         }
 
-        return aliasCaps;
+        for (Map.Entry entry : defaultProperties.entrySet())
+        {
+            if (!config.containsKey(entry.getKey()))
+            {
+                config.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        if(sysprops != null && "true".equalsIgnoreCase(felix._getProperty(FelixConstants.USE_PROPERTY_SUBSTITUTION_IN_SYSTEMPACKAGES)))
+        {
+            config.put(Constants.FRAMEWORK_SYSTEMPACKAGES, Util.getPropertyWithSubs(Util.toProperties(config), Constants.FRAMEWORK_SYSTEMPACKAGES));
+        }
+        else if (sysprops == null)
+        {
+            config.put(Constants.FRAMEWORK_SYSTEMPACKAGES, Util.getPropertyWithSubs(Util.toProperties(config), Constants.FRAMEWORK_SYSTEMPACKAGES));
+        }
+
+        String syspropsExtra = felix._getProperty(Constants.FRAMEWORK_SYSTEMPACKAGES_EXTRA);
+        if (syspropsExtra != null && "true".equalsIgnoreCase(felix._getProperty(FelixConstants.USE_PROPERTY_SUBSTITUTION_IN_SYSTEMPACKAGES)))
+        {
+            config.put(Constants.FRAMEWORK_SYSTEMPACKAGES_EXTRA, Util.getPropertyWithSubs(Util.toProperties(config), Constants.FRAMEWORK_SYSTEMPACKAGES_EXTRA));
+        }
+
+        String syscaps = felix._getProperty(Constants.FRAMEWORK_SYSTEMCAPABILITIES);
+        if(syscaps != null && "true".equalsIgnoreCase(felix._getProperty(FelixConstants.USE_PROPERTY_SUBSTITUTION_IN_SYSTEMPACKAGES)))
+        {
+            config.put(Constants.FRAMEWORK_SYSTEMCAPABILITIES, Util.getPropertyWithSubs(Util.toProperties(config), Constants.FRAMEWORK_SYSTEMCAPABILITIES));
+        }
+        else if(syscaps == null)
+        {
+            config.put(Constants.FRAMEWORK_SYSTEMCAPABILITIES, Util.getPropertyWithSubs(Util.toProperties(config), Constants.FRAMEWORK_SYSTEMCAPABILITIES));
+        }
+
+        String syscapsExtra = felix._getProperty(Constants.FRAMEWORK_SYSTEMCAPABILITIES_EXTRA);
+        if (syscapsExtra != null && "true".equalsIgnoreCase(felix._getProperty(FelixConstants.USE_PROPERTY_SUBSTITUTION_IN_SYSTEMPACKAGES)))
+        {
+            config.put(Constants.FRAMEWORK_SYSTEMCAPABILITIES_EXTRA, Util.getPropertyWithSubs(Util.toProperties(config), Constants.FRAMEWORK_SYSTEMCAPABILITIES_EXTRA));
+        }
+
+        m_systemBundleRevision.update(config);
     }
 
     public BundleRevisionImpl getRevision()
     {
         return m_systemBundleRevision;
-    }
-
-    public Object getSecurityContext()
-    {
-        return m_securityContext;
-    }
-
-    public synchronized void setSecurityContext(Object securityContext)
-    {
-        m_securityContext = securityContext;
     }
 
     /**
@@ -379,7 +389,6 @@ class ExtensionManager extends URLStreamHandler implements Content
      * exports of this instance. Subsequently, they are available form the
      * instance in it's role as content loader.
      *
-     * @param felix the framework instance the given extension bundle comes from.
      * @param bundle the extension bundle to add.
      * @throws BundleException if extension bundles are not supported or this is
      *          not a framework extension.
@@ -387,8 +396,7 @@ class ExtensionManager extends URLStreamHandler implements Content
      *          AdminPermission.EXTENSIONLIFECYCLE and security is enabled.
      * @throws Exception in case something goes wrong.
      */
-    synchronized void addExtensionBundle(Felix felix, BundleImpl bundle)
-        throws SecurityException, BundleException, Exception
+    void addExtensionBundle(BundleImpl bundle) throws Exception
     {
         Object sm = System.getSecurityManager();
         if (sm != null)
@@ -406,83 +414,188 @@ class ExtensionManager extends URLStreamHandler implements Content
             ((BundleRevisionImpl) bundle.adapt(BundleRevision.class))
                 .getHeaders().get(Constants.FRAGMENT_HOST));
 
-        // We only support classpath extensions (not bootclasspath).
         if (!Constants.EXTENSION_FRAMEWORK.equals(directive))
         {
-            throw new BundleException("Unsupported Extension Bundle type: " +
+           throw new BundleException("Unsupported Extension Bundle type: " +
                 directive, new UnsupportedOperationException(
                 "Unsupported Extension Bundle type!"));
         }
-
-        try
+        else if (m_extenderFramework == null)
         {
-            // Merge the exported packages with the exported packages of the systembundle.
-            List<BundleCapability> exports = null;
+            // We don't support extensions
+            m_logger.log(bundle, Logger.LOG_WARNING,
+                "Unable to add extension bundle - Maybe ClassLoader is not supported " +
+                        "(on java9, try --add-opens=java.base/jdk.internal.loader=ALL-UNNAMED)?");
+
+            throw new UnsupportedOperationException(
+                "Unable to add extension bundle.");
+        }
+
+        Content content = bundle.adapt(BundleRevisionImpl.class).getContent();
+        final File file;
+        if (content instanceof JarContent)
+        {
+            file = ((JarContent) content).getFile();
+        }
+        else if (content instanceof DirectoryContent)
+        {
+            file = ((DirectoryContent) content).getFile();
+        }
+        else
+        {
+            file = null;
+        }
+        if (file == null)
+        {
+            // We don't support revision type for extension
+            m_logger.log(bundle, Logger.LOG_WARNING,
+                    "Unable to add extension bundle - wrong revision type?");
+
+            throw new UnsupportedOperationException(
+                    "Unable to add extension bundle.");
+        }
+
+        BundleRevisionImpl bri = bundle.adapt(BundleRevisionImpl.class);
+
+        bri.resolve(null);
+
+        // we have to try again for all previously failed extensions because maybe they can now resolve.
+        m_unresolvedExtensions.addAll(m_failedExtensions);
+        m_failedExtensions.clear();
+        m_unresolvedExtensions.add(bri);
+    }
+
+    public synchronized List<Bundle> resolveExtensionBundles(Felix felix)
+    {
+        if (m_unresolvedExtensions.isEmpty())
+        {
+            return Collections.emptyList();
+        }
+
+        // Collect the highest version of unresolved that are not already resolved by bsn
+        List<BundleRevisionImpl> extensions = new ArrayList<BundleRevisionImpl>();
+        // Collect the unresolved that where filtered out as alternatives in case the highest version doesn't resolve
+        List<BundleRevisionImpl> alt = new ArrayList<BundleRevisionImpl>();
+
+        outer : for (BundleRevisionImpl revision : m_unresolvedExtensions)
+        {
+            // Already resolved by bsn?
+            for (BundleRevisionImpl existing : m_resolvedExtensions)
+            {
+                if (existing.getSymbolicName().equals(revision.getSymbolicName()))
+                {
+                    // Then ignore it
+                    continue outer;
+                }
+            }
+            // Otherwise, does a higher version exist by bsn?
+            for (BundleRevisionImpl other : m_unresolvedExtensions)
+            {
+                if ((revision != other) && (revision.getSymbolicName().equals(other.getSymbolicName())) &&
+                    revision.getVersion().compareTo(other.getVersion()) < 0)
+                {
+                    // Add this one to alternatives and filter it
+                    alt.add(revision);
+                    continue outer;
+                }
+            }
+
+            // no higher version and not resolved yet by bsn - try to resolve it
+            extensions.add(revision);
+        }
+
+        // This will return all resolvable revisions with the wires they need
+        Map<BundleRevisionImpl, List<BundleWire>> wirings = findResolvableExtensions(extensions, alt);
+
+        List<Bundle> result = new ArrayList<Bundle>();
+
+        for (Map.Entry<BundleRevisionImpl, List<BundleWire>> entry : wirings.entrySet())
+        {
+            BundleRevisionImpl revision = entry.getKey();
+
+            // move this revision from unresolved to resolved
+            m_unresolvedExtensions.remove(revision);
+            m_resolvedExtensions.add(revision);
+
+            BundleWire wire = new BundleWireImpl(revision,
+                revision.getDeclaredRequirements(BundleRevision.HOST_NAMESPACE).get(0),
+                m_systemBundleRevision,  m_systemBundleRevision.getWiring().getCapabilities(BundleRevision.HOST_NAMESPACE).get(0));
+
             try
             {
-                exports = ManifestParser.parseExportHeader(
-                    m_logger, m_systemBundleRevision,
-                    (String) ((BundleRevisionImpl) bundle.adapt(BundleRevisionImpl.class))
-                        .getHeaders().get(Constants.EXPORT_PACKAGE),
-                    m_systemBundleRevision.getSymbolicName(), m_systemBundleRevision.getVersion());
-                exports = aliasSymbolicName(exports);
+                revision.resolve(new BundleWiringImpl(m_logger, m_systemBundleRevision.m_configMap, null, revision, null,
+                    Collections.singletonList(wire), Collections.EMPTY_MAP, Collections.EMPTY_MAP));
             }
             catch (Exception ex)
             {
-                m_logger.log(
-                    bundle,
-                    Logger.LOG_ERROR,
-                    "Error parsing extension bundle export statement: "
-                    + ((BundleRevisionImpl) bundle.adapt(BundleRevisionImpl.class))
-                        .getHeaders().get(Constants.EXPORT_PACKAGE), ex);
-                return;
+                m_logger.log(revision.getBundle(), Logger.LOG_ERROR,
+                        "Error resolving extension bundle : " + revision.getBundle(), ex);
             }
 
-            // Add the bundle as extension if we support extensions
-            if (m_extensionManager != null)
+            felix.getDependencies().addDependent(wire);
+
+            List<BundleCapability> caps = new ArrayList<BundleCapability>();
+            for (BundleCapability cap : entry.getKey().getDeclaredCapabilities(null))
             {
-                // This needs to be the private instance.
-                m_extensionManager.addExtension(felix, bundle);
+                if (!IDENTITY.contains(cap.getNamespace()))
+                {
+                    caps.add(cap);
+                }
+            }
+            m_systemBundleRevision.appendCapabilities(caps);
+            for (BundleWire w : entry.getValue())
+            {
+                if (!w.getRequirement().getNamespace().equals(BundleRevision.HOST_NAMESPACE) &&
+                    !w.getRequirement().getNamespace().equals(BundleRevision.PACKAGE_NAMESPACE))
+                {
+                    ((BundleWiringImpl) w.getRequirer().getWiring()).addDynamicWire(w);
+                    felix.getDependencies().addDependent(w);
+                }
+            }
+
+            final File f;
+            Content revisionContent = revision.getContent();
+            if (revisionContent instanceof JarContent)
+            {
+                f = ((JarContent) revisionContent).getFile();
             }
             else
             {
-                // We don't support extensions (i.e., the parent is not an URLClassLoader).
-                m_logger.log(bundle, Logger.LOG_WARNING,
-                    "Unable to add extension bundle to FrameworkClassLoader - Maybe not an URLClassLoader?");
-                throw new UnsupportedOperationException(
-                    "Unable to add extension bundle to FrameworkClassLoader - Maybe not an URLClassLoader?");
+                f = ((DirectoryContent) revisionContent).getFile();
             }
-            appendCapabilities(exports);
-        }
-        catch (Exception ex)
-        {
-            throw ex;
+            try
+            {
+                AccessController.doPrivileged(new PrivilegedExceptionAction<Void>()
+                {
+                    @Override
+                    public Void run() throws Exception {
+                        m_extenderFramework.add(f);
+                        return null;
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                m_logger.log(revision.getBundle(), Logger.LOG_ERROR,
+                    "Error adding extension bundle to framework classloader: " + revision.getBundle(), ex);
+            }
+
+            felix.setBundleStateAndNotify(revision.getBundle(), Bundle.RESOLVED);
+            result.add(revision.getBundle());
         }
 
-        BundleRevisionImpl bri = (BundleRevisionImpl) bundle.adapt(BundleRevisionImpl.class);
-        List<BundleRequirement> reqs = bri.getDeclaredRequirements(BundleRevision.HOST_NAMESPACE);
-        List<BundleCapability> caps = getCapabilities(BundleRevision.HOST_NAMESPACE);
-        BundleWire bw = new BundleWireImpl(bri, reqs.get(0), m_systemBundleRevision, caps.get(0));
-        bri.resolve(
-            new BundleWiringImpl(
-                m_logger,
-                m_configMap,
-                null,
-                bri,
-                null,
-                Collections.singletonList(bw),
-                Collections.EMPTY_MAP,
-                Collections.EMPTY_MAP));
-        felix.getDependencies().addDependent(bw);
-        felix.setBundleStateAndNotify(bundle, Bundle.RESOLVED);
+        // at this point, all revisions left in unresolved are not resolvable
+        m_failedExtensions.addAll(m_unresolvedExtensions);
+        m_unresolvedExtensions.clear();
+
+        return result;
     }
 
     /**
-     * This is a Felix specific extension mechanism that allows extension bundles
-     * to have activators and be started via this method.
+     * Start extension bundle if it has an activator
      *
      * @param felix the framework instance the extension bundle is installed in.
-     * @param bundle the extension bundle to start if it has a Felix specific activator.
+     * @param bundle the extension bundle to start if it has a an extension bundle activator.
      */
     void startExtensionBundle(Felix felix, BundleImpl bundle)
     {
@@ -502,7 +615,7 @@ class ExtensionManager extends URLStreamHandler implements Content
             {
 // TODO: SECURITY - Should this consider security?
                 BundleActivator activator = (BundleActivator)
-                    felix.getClass().getClassLoader().loadClass(
+                    Felix.m_secureAction.getClassLoader(felix.getClass()).loadClass(
                         activatorClass.trim()).newInstance();
 
                 BundleContext context = felix._getBundleContext();
@@ -592,203 +705,127 @@ class ExtensionManager extends URLStreamHandler implements Content
         m_extensionTuples.clear();
     }
 
-    /**
-     * Remove all extension registered by the given framework instance. Note, it
-     * is not possible to unregister allready loaded classes form those extensions.
-     * That is why the spec requires a JVM restart.
-     *
-     * @param felix the framework instance whose extensions need to be unregistered.
-     */
-    void removeExtensions(Felix felix)
+    public synchronized void removeExtensionBundles()
     {
-        if (m_extensionManager != null)
-        {
-            m_extensionManager._removeExtensions(felix);
-        }
+        m_resolvedExtensions.clear();
+        m_unresolvedExtensions.clear();
+        m_failedExtensions.clear();
     }
 
-    private List<BundleCapability> getCapabilities(String namespace)
+    private Map<BundleRevisionImpl, List<BundleWire>> findResolvableExtensions(List<BundleRevisionImpl> extensions, List<BundleRevisionImpl> alt)
     {
-        List<BundleCapability> caps = m_capabilities;
-        List<BundleCapability> result = caps;
-        if (namespace != null)
+        // The idea is to loop through the extensions and try to resolve all unresolved extension. If we can't resolve
+        // a given extension, we will call the method again with the extension in question removed or replaced if there
+        // is a replacement for it in alt.
+        // This resolve doesn't take into account that maybe a revision could be resolved with a revision from alt but
+        // not with the current extensions. In that case, it will be removed (assuming the current extension can be resolved)
+        // in other words, it will prefer to resolve the highest version of each extension over install order
+        Map<BundleRevisionImpl, List<BundleWire>> wires = new LinkedHashMap<BundleRevisionImpl, List<BundleWire>>();
+
+        for (BundleRevisionImpl bri : extensions)
         {
-            result = new ArrayList<BundleCapability>();
-            for (BundleCapability cap : caps)
+            List<BundleWire> wi = new ArrayList<BundleWire>();
+            boolean resolved = true;
+            outer: for (BundleRequirement req : bri.getDeclaredRequirements(null))
             {
-                if (cap.getNamespace().equals(namespace))
+                // first see if we can resolve from the system bundle
+                for (BundleCapability cap : m_systemBundleRevision.getWiring().getCapabilities(req.getNamespace()))
                 {
-                    result.add(cap);
-                }
-            }
-        }
-        return result;
-    }
-
-    private synchronized void appendCapabilities(List<BundleCapability> caps)
-    {
-        List<BundleCapability> newCaps =
-            new ArrayList<BundleCapability>(m_capabilities.size() + caps.size());
-        newCaps.addAll(m_capabilities);
-        newCaps.addAll(caps);
-        m_capabilities = ImmutableList.newInstance(newCaps);
-        m_headerMap.put(Constants.EXPORT_PACKAGE, convertCapabilitiesToHeaders(m_headerMap));
-    }
-
-    private String convertCapabilitiesToHeaders(Map headers)
-    {
-        StringBuffer exportSB = new StringBuffer("");
-        Set<String> exportNames = new HashSet<String>();
-
-        List<BundleCapability> caps = m_capabilities;
-        for (BundleCapability cap : caps)
-        {
-            if (cap.getNamespace().equals(BundleRevision.PACKAGE_NAMESPACE))
-            {
-                // Add a comma separate if there is an existing package.
-                if (exportSB.length() > 0)
-                {
-                    exportSB.append(", ");
-                }
-
-                // Append exported package information.
-                exportSB.append(cap.getAttributes().get(BundleRevision.PACKAGE_NAMESPACE));
-                for (Entry<String, String> entry : cap.getDirectives().entrySet())
-                {
-                    exportSB.append("; ");
-                    exportSB.append(entry.getKey());
-                    exportSB.append(":=\"");
-                    exportSB.append(entry.getValue());
-                    exportSB.append("\"");
-                }
-                for (Entry<String, Object> entry : cap.getAttributes().entrySet())
-                {
-                    if (!entry.getKey().equals(BundleRevision.PACKAGE_NAMESPACE)
-                        && !entry.getKey().equals(Constants.BUNDLE_SYMBOLICNAME_ATTRIBUTE)
-                        && !entry.getKey().equals(Constants.BUNDLE_VERSION_ATTRIBUTE))
+                    if (req.matches(cap))
                     {
-                        exportSB.append("; ");
-                        exportSB.append(entry.getKey());
-                        exportSB.append("=\"");
-                        exportSB.append(entry.getValue());
-                        exportSB.append("\"");
+                        // we can, create the wire but in the case of an ee requirement, make it from the extension
+                        wi.add(new BundleWireImpl(
+                                req.getNamespace().equals(ExecutionEnvironmentNamespace.EXECUTION_ENVIRONMENT_NAMESPACE) ?
+                                        bri : m_systemBundleRevision, req, m_systemBundleRevision, cap));
+
+                        continue outer;
                     }
                 }
 
-                // Remember exported packages.
-                exportNames.add(
-                    (String) cap.getAttributes().get(BundleRevision.PACKAGE_NAMESPACE));
-            }
-        }
-
-        m_exportNames = exportNames;
-
-        return exportSB.toString();
-    }
-
-    //
-    // Classpath Extension
-    //
-
-    /*
-     * See whether any registered extension provides the class requested. If not
-     * throw an IOException.
-     */
-    public URLConnection openConnection(URL url) throws IOException
-    {
-        String path = url.getPath();
-
-        if (path.trim().equals("/"))
-        {
-            return new URLHandlersBundleURLConnection(url);
-        }
-
-        Bundle[] extensions = m_extensionsCache;
-        URL result = null;
-        for (Bundle extBundle : extensions)
-        {
-            try
-            {
-                BundleRevisionImpl bri =
-                    (BundleRevisionImpl) extBundle.adapt(BundleRevision.class);
-                if (bri != null)
+                // now loop through the resolved extensions
+                for (BundleRevisionImpl extension : m_resolvedExtensions)
                 {
-                    result = bri.getResourceLocal(path);
+                    // and check the caps that will not be lifted (i.e., identity)
+                    for (BundleCapability cap : extension.getDeclaredCapabilities(req.getNamespace()))
+                    {
+                        if (req.matches(cap))
+                        {
+                            // it was identity - hence, use the extension itself as provider
+                            wi.add(new BundleWireImpl(m_systemBundleRevision, req, extension, cap));
+                            continue outer;
+                        }
+                    }
+                }
+                // now loop through the other extensions
+                for (BundleRevisionImpl extension : extensions)
+                {
+                    for (BundleCapability cap : extension.getDeclaredCapabilities(req.getNamespace()))
+                    {
+                        if (req.matches(cap))
+                        {
+                            // we can use a yet unresolved extension (resolved one are implicitly checked by the
+                            // system bundle loop above as they would be attached.
+                            wi.add(new BundleWireImpl(m_systemBundleRevision, req,
+                                // lift identity
+                                IDENTITY.contains(cap.getNamespace()) ?
+                                extension : m_systemBundleRevision, cap));
+                            continue outer;
+                        }
+                    }
+                    // and check the caps that will not be lifted (i.e., identity)
+                    for (BundleCapability cap : extension.getDeclaredCapabilities(req.getNamespace()))
+                    {
+                        if (req.matches(cap))
+                        {
+                            // it was identity - hence, use the extension itself as provider
+                            wi.add(new BundleWireImpl(m_systemBundleRevision, req, extension, cap));
+                            continue outer;
+                        }
+                    }
+                }
+                // we couldn't find a provider - was it optional?
+                if (!((BundleRequirementImpl)req).isOptional())
+                {
+                    resolved = false;
+                    break;
                 }
             }
-            catch (Exception ex)
+            if(resolved)
             {
-                // Maybe the bundle went away, so ignore this exception.
+                wires.put(bri, wi);
             }
-            if (result != null)
+            else
             {
-                return result.openConnection();
-            }
-        }
+                // we failed to resolve this extension - try again without it. Yes, this throws away the work done
+                // up to this point
+                List<BundleRevisionImpl> next = new ArrayList<BundleRevisionImpl>(extensions);
+                List<BundleRevisionImpl> nextAlt = new ArrayList<BundleRevisionImpl>();
 
-        return new URLConnection(url)
-            {
-                public void connect() throws IOException
+                outer : for (BundleRevisionImpl replacement : alt)
                 {
-                    throw new IOException("Resource not provided by any extension!");
+                    if (bri.getSymbolicName().equals(replacement.getSymbolicName()))
+                    {
+                        for (BundleRevisionImpl other : alt)
+                        {
+                            if ((replacement != other) && (replacement.getSymbolicName().equals(other.getSymbolicName())) &&
+                                    replacement.getVersion().compareTo(other.getVersion()) < 0)
+                            {
+                                nextAlt.add(replacement);
+                                continue outer;
+                            }
+                        }
+                        next.set(next.indexOf(bri), replacement);
+                        break;
+                    }
+                    nextAlt.add(replacement);
                 }
-            };
-    }
+                
+                next.remove(bri);
 
-    @Override
-    protected InetAddress getHostAddress(URL u)
-    {
-        // the extension URLs do not address real hosts
-        return null;
-    }
-
-    private synchronized void addExtension(Object source, Bundle extension)
-    {
-        List sourceExtensions = (List) m_sourceToExtensions.get(source);
-
-        if (sourceExtensions == null)
-        {
-            sourceExtensions = new ArrayList();
-            m_sourceToExtensions.put(source, sourceExtensions);
-        }
-
-        sourceExtensions.add(extension);
-
-        _add(extension.getSymbolicName(), extension);
-        m_extensionsCache = (Bundle[])
-                m_extensions.toArray(new Bundle[m_extensions.size()]);
-    }
-
-    private synchronized void _removeExtensions(Object source)
-    {
-        if (m_sourceToExtensions.remove(source) == null)
-        {
-            return;
-        }
-
-        m_extensions.clear();
-        m_names.clear();
-
-        for (Iterator iter = m_sourceToExtensions.values().iterator(); iter.hasNext();)
-        {
-            List extensions = (List) iter.next();
-            for (Iterator extIter = extensions.iterator(); extIter.hasNext();)
-            {
-                Bundle bundle = (Bundle) extIter.next();
-                _add(bundle.getSymbolicName(), bundle);
+                return next.isEmpty() ? Collections.EMPTY_MAP : findResolvableExtensions(next, nextAlt);
             }
-            m_extensionsCache = (Bundle[])
-                m_extensions.toArray(new Bundle[m_extensions.size()]);
         }
-    }
-
-    private void _add(String name, Bundle extension)
-    {
-        if (!m_names.contains(name))
-        {
-            m_names.add(name);
-            m_extensions.add(extension);
-        }
+        return wires;
     }
 
     public void close()
@@ -847,29 +884,190 @@ class ExtensionManager extends URLStreamHandler implements Content
 
     class ExtensionManagerRevision extends BundleRevisionImpl
     {
-        private final Version m_version;
+        private volatile Map m_configMap;
+        private final Map m_headerMap = new StringMap();
+        private volatile List<BundleCapability> m_capabilities = Collections.EMPTY_LIST;
+        private volatile Version m_version;
         private volatile BundleWiring m_wiring;
 
-        ExtensionManagerRevision(Felix felix)
+        ExtensionManagerRevision(Map configMap, Felix felix)
         {
             super(felix, "0");
-            m_version = new Version((String)
+
+            m_configMap = configMap;
+
+// TODO: FRAMEWORK - Not all of this stuff really belongs here
+            // Populate system bundle header map.
+            m_headerMap.put(FelixConstants.BUNDLE_VERSION,
                 m_configMap.get(FelixConstants.FELIX_VERSION_PROPERTY));
+            m_headerMap.put(FelixConstants.BUNDLE_SYMBOLICNAME,
+                FelixConstants.SYSTEM_BUNDLE_SYMBOLICNAME);
+            m_headerMap.put(FelixConstants.BUNDLE_NAME, "System Bundle");
+            m_headerMap.put(FelixConstants.BUNDLE_DESCRIPTION,
+                "This bundle is system specific; it implements various system services.");
+            m_headerMap.put(FelixConstants.EXPORT_SERVICE,
+                "org.osgi.service.packageadmin.PackageAdmin," +
+                    "org.osgi.service.startlevel.StartLevel," +
+                    "org.osgi.service.url.URLHandlers");
+
+
+            m_headerMap.put(FelixConstants.BUNDLE_MANIFESTVERSION, "2");
+
+
+            m_version = new Version((String) m_configMap.get(FelixConstants.FELIX_VERSION_PROPERTY));
+
+            try
+            {
+                ManifestParser mp = new ManifestParser(
+                    m_logger, m_configMap, this, m_headerMap);
+                List<BundleCapability> caps = ManifestParser.aliasSymbolicName(mp.getCapabilities(), this);
+                caps.add(buildNativeCapabilites(this, m_configMap));
+                appendCapabilities(caps);
+                m_headerMap.put(Constants.EXPORT_PACKAGE, convertCapabilitiesToHeaders(caps));
+            }
+            catch (Exception ex)
+            {
+                m_capabilities = Collections.EMPTY_LIST;
+                m_logger.log(
+                    Logger.LOG_ERROR,
+                    "Error parsing system bundle statement", ex);
+            }
+        }
+
+        private void update(Map configMap)
+        {
+            Properties configProps = Util.toProperties(configMap);
+            // The system bundle exports framework packages as well as
+            // arbitrary user-defined packages from the system class path.
+            // We must construct the system bundle's export metadata.
+            // Get configuration property that specifies which class path
+            // packages should be exported by the system bundle.
+            String syspkgs = configProps.getProperty(FelixConstants.FRAMEWORK_SYSTEMPACKAGES);
+
+            syspkgs = (syspkgs == null) ? "" : syspkgs;
+
+            // If any extra packages are specified, then append them.
+            String pkgextra = configProps.getProperty(FelixConstants.FRAMEWORK_SYSTEMPACKAGES_EXTRA);
+
+            syspkgs = ((pkgextra == null) || (pkgextra.trim().length() == 0))
+                ? syspkgs : syspkgs + (pkgextra.trim().startsWith(",") ? pkgextra : "," + pkgextra);
+
+            m_headerMap.put(FelixConstants.EXPORT_PACKAGE, syspkgs);
+
+            // The system bundle alsp provides framework generic capabilities
+            // as well as arbitrary user-defined generic capabilities. We must
+            // construct the system bundle's capabilities metadata. Get the
+            // configuration property that specifies which capabilities should
+            // be provided by the system bundle.
+            String syscaps = configProps.getProperty(Constants.FRAMEWORK_SYSTEMCAPABILITIES);
+
+            syscaps = (syscaps == null) ? "" : syscaps;
+
+            // If any extra capabilities are specified, then append them.
+            String capextra = configProps.getProperty(Constants.FRAMEWORK_SYSTEMCAPABILITIES_EXTRA);
+
+            syscaps = ((capextra == null) || (capextra.trim().length() == 0))
+                ? syscaps : syscaps + (capextra.trim().startsWith(",") ? capextra : "," + capextra);
+
+            m_headerMap.put(FelixConstants.PROVIDE_CAPABILITY, syscaps);
+
+            try
+            {
+                ManifestParser mp = new ManifestParser(
+                    m_logger, m_configMap, this, m_headerMap);
+                List<BundleCapability> caps = ManifestParser.aliasSymbolicName(mp.getCapabilities(), this);
+                caps.add(buildNativeCapabilites(this, m_configMap));
+                m_capabilities = Collections.EMPTY_LIST;
+                appendCapabilities(caps);
+                m_headerMap.put(Constants.EXPORT_PACKAGE, convertCapabilitiesToHeaders(caps));
+            }
+            catch (Exception ex)
+            {
+                m_capabilities = Collections.EMPTY_LIST;
+                m_logger.log(
+                    Logger.LOG_ERROR,
+                    "Error parsing system bundle statement.", ex);
+            }
+        }
+
+        private void appendCapabilities(List<BundleCapability> caps)
+        {
+            List<BundleCapability> newCaps = new ArrayList<BundleCapability>(m_capabilities.size() + caps.size());
+            newCaps.addAll(m_capabilities);
+            newCaps.addAll(caps);
+            m_capabilities = Util.newImmutableList(newCaps);
+        }
+
+        private String convertCapabilitiesToHeaders(List<BundleCapability> caps)
+        {
+            StringBuilder exportSB = new StringBuilder();
+
+            for (BundleCapability cap : caps)
+            {
+                if (cap.getNamespace().equals(BundleRevision.PACKAGE_NAMESPACE))
+                {
+                    // Add a comma separate if there is an existing package.
+                    if (exportSB.length() > 0)
+                    {
+                        exportSB.append(", ");
+                    }
+
+                    // Append exported package information.
+                    exportSB.append(cap.getAttributes().get(BundleRevision.PACKAGE_NAMESPACE));
+                    for (Entry<String, String> entry : cap.getDirectives().entrySet())
+                    {
+                        exportSB.append("; ");
+                        exportSB.append(entry.getKey());
+                        exportSB.append(":=\"");
+                        exportSB.append(entry.getValue());
+                        exportSB.append("\"");
+                    }
+                    for (Entry<String, Object> entry : cap.getAttributes().entrySet())
+                    {
+                        if (!entry.getKey().equals(BundleRevision.PACKAGE_NAMESPACE)
+                            && !entry.getKey().equals(Constants.BUNDLE_SYMBOLICNAME_ATTRIBUTE)
+                            && !entry.getKey().equals(Constants.BUNDLE_VERSION_ATTRIBUTE))
+                        {
+                            exportSB.append("; ");
+                            exportSB.append(entry.getKey());
+                            exportSB.append("=\"");
+                            exportSB.append(entry.getValue());
+                            exportSB.append("\"");
+                        }
+                    }
+                }
+            }
+
+            return exportSB.toString();
         }
 
         @Override
         public Map getHeaders()
         {
-            synchronized (ExtensionManager.this)
-            {
-                return m_headerMap;
-            }
+            return Util.newImmutableMap(m_headerMap);
         }
 
         @Override
         public List<BundleCapability> getDeclaredCapabilities(String namespace)
         {
-            return ExtensionManager.this.getCapabilities(namespace);
+            List<BundleCapability> caps = m_capabilities;
+            List<BundleCapability> result;
+            if (namespace != null)
+            {
+                result = new ArrayList<BundleCapability>();
+                for (BundleCapability cap : caps)
+                {
+                    if (cap.getNamespace().equals(namespace))
+                    {
+                        result.add(cap);
+                    }
+                }
+            }
+            else
+            {
+                result = new ArrayList<BundleCapability>(m_capabilities);
+            }
+            return result;
         }
 
         @Override
@@ -961,7 +1159,7 @@ class ExtensionManager extends URLStreamHandler implements Content
         @Override
         public List<BundleCapability> getCapabilities(String namespace)
         {
-            return ExtensionManager.this.getCapabilities(namespace);
+            return m_systemBundleRevision.getDeclaredCapabilities(namespace);
         }
 
         @Override
@@ -973,42 +1171,7 @@ class ExtensionManager extends URLStreamHandler implements Content
         @Override
         public Class getClassByDelegation(String name) throws ClassNotFoundException
         {
-            Class clazz = null;
-            String pkgName = Util.getClassPackage(name);
-            if (shouldBootDelegate(pkgName))
-            {
-                try
-                {
-                    // Get the appropriate class loader for delegation.
-                    ClassLoader bdcl = getBootDelegationClassLoader();
-                    clazz = bdcl.loadClass(name);
-                    // If this is a java.* package, then always terminate the
-                    // search; otherwise, continue to look locally if not found.
-                    if (pkgName.startsWith("java.") || (clazz != null))
-                    {
-                        return clazz;
-                    }
-                }
-                catch (ClassNotFoundException ex)
-                {
-                    // If this is a java.* package, then always terminate the
-                    // search; otherwise, continue to look locally if not found.
-                    if (pkgName.startsWith("java."))
-                    {
-                        throw ex;
-                    }
-                }
-            }
-            if (clazz == null)
-            {
-                if (!m_exportNames.contains(Util.getClassPackage(name)))
-                {
-                    throw new ClassNotFoundException(name);
-                }
-
-                clazz = getClass().getClassLoader().loadClass(name);
-            }
-            return clazz;
+            return getClass().getClassLoader().loadClass(name);
         }
 
         @Override

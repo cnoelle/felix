@@ -16,16 +16,17 @@
  */
 package org.apache.felix.http.jetty.internal;
 
-import static org.easymock.EasyMock.createNiceMock;
-import static org.easymock.EasyMock.replay;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.util.ArrayList;
 import java.util.Hashtable;
+import java.util.List;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 import org.osgi.framework.BundleContext;
 
 /**
@@ -44,7 +45,7 @@ public class JettyConfigTest
 
     @Test public void testGetPortInRange()
     {
-        Hashtable<String, Object> props = new Hashtable<String, Object>();
+        Hashtable<String, Object> props = new Hashtable<>();
         props.put("org.osgi.service.http.port", "[8000,9000]");
         props.put("org.osgi.service.http.port.secure", "[10000,11000)");
         this.config.update(props);
@@ -69,7 +70,7 @@ public class JettyConfigTest
 
     @Test public void testGetPortInvalidRange()
     {
-        Hashtable<String, Object> props = new Hashtable<String, Object>();
+        Hashtable<String, Object> props = new Hashtable<>();
         props.put("org.osgi.service.http.port", "+12000,13000*");
         props.put("org.osgi.service.http.port.secure", "%14000,15000");
         this.config.update(props);
@@ -80,7 +81,7 @@ public class JettyConfigTest
 
     @Test public void testGetSpecificPortOne() throws Exception
     {
-        Hashtable<String, Object> props = new Hashtable<String, Object>();
+        Hashtable<String, Object> props = new Hashtable<>();
         props.put("org.osgi.service.http.port", "1");
         this.config.update(props);
         assertTrue(this.config.getHttpPort() == 1);
@@ -88,17 +89,17 @@ public class JettyConfigTest
 
     @Test public void testGetRandomPort()
     {
-        Hashtable<String, Object> props = new Hashtable<String, Object>();
+        Hashtable<String, Object> props = new Hashtable<>();
         props.put("org.osgi.service.http.port", "*");
         props.put("org.osgi.service.http.port.secure", "*");
         this.config.update(props);
         assertTrue(this.config.getHttpPort() != 8080);
-        assertTrue(this.config.getHttpsPort() != 433);
+        assertTrue(this.config.getHttpsPort() != 443);
     }
 
     @Test public void testGetRandomPortZero() throws Exception
     {
-        Hashtable<String, Object> props = new Hashtable<String, Object>();
+        Hashtable<String, Object> props = new Hashtable<>();
         props.put("org.osgi.service.http.port", "0");
         this.config.update(props);
         assertTrue(this.config.getHttpPort() != 0);
@@ -108,7 +109,7 @@ public class JettyConfigTest
     {
         int port = 80;
 
-        Hashtable<String, Object> props = new Hashtable<String, Object>();
+        Hashtable<String, Object> props = new Hashtable<>();
         props.put("org.osgi.service.http.port", port);
         props.put("org.osgi.service.http.port.secure", port);
         this.config.update(props);
@@ -125,11 +126,33 @@ public class JettyConfigTest
         assertArrayEquals(expecteds, this.config.getExcludedCipherSuites());
     }
 
+    @SuppressWarnings("unchecked")
+    @Test public void testAdditionalCustomProperties() {
+        Hashtable<String, Object> props = new Hashtable<>();
+        props.put(JettyConfig.FELIX_CUSTOM_HTTP_RUNTIME_PROPERTY_PREFIX + "number", 5);
+        props.put(JettyConfig.FELIX_CUSTOM_HTTP_RUNTIME_PROPERTY_PREFIX + "string", "testString");
+        List<String> list = new ArrayList<>(3);
+        list.add("string1");
+        list.add("string2");
+        list.add("string3");
+        props.put(JettyConfig.FELIX_CUSTOM_HTTP_RUNTIME_PROPERTY_PREFIX + "list", list);
+        this.config.update(props);
+
+        Hashtable<String, Object> toCheck = new Hashtable<>();
+
+        this.config.setServiceProperties(toCheck);
+
+        assertEquals(5, toCheck.get("number"));
+        assertEquals("testString", toCheck.get("string"));
+        assertTrue(toCheck.get("list") instanceof List);
+        assertEquals(3, ((List<String>)toCheck.get("list")).size());
+        assertEquals("string2", ((List<String>)toCheck.get("list")).get(1));
+    }
+
     @Before
     public void setUp()
     {
-        this.context = createNiceMock(BundleContext.class);
-        replay(this.context);
+        this.context = Mockito.mock(BundleContext.class);
         this.config = new JettyConfig(this.context);
     }
 }

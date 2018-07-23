@@ -31,6 +31,7 @@ import junit.framework.TestCase;
 
 import org.apache.felix.bundlerepository.Resolver;
 import org.apache.felix.utils.log.Logger;
+import org.apache.felix.utils.resource.RequirementImpl;
 import org.mockito.Mockito;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
@@ -50,7 +51,8 @@ public class OSGiRepositoryXMLTest extends TestCase {
         repoAdmin.addRepository(url);
 
         Repository repo = new OSGiRepositoryImpl(repoAdmin);
-        Requirement req = new OSGiRequirementImpl("osgi.identity",
+        Requirement req = new RequirementImpl(Mockito.mock(Resource.class),
+                "osgi.identity",
                 "(osgi.identity=cdi-subsystem)");
 
         Map<Requirement, Collection<Capability>> result = repo
@@ -125,7 +127,8 @@ public class OSGiRepositoryXMLTest extends TestCase {
         repoAdmin.addRepository(url);
 
         Repository repo = new OSGiRepositoryImpl(repoAdmin);
-        Requirement req = new OSGiRequirementImpl("osgi.identity",
+        Requirement req = new RequirementImpl(Mockito.mock(Resource.class),
+                "osgi.identity",
                 "(license=http://www.opensource.org/licenses/mytestlicense)");
 
         Map<Requirement, Collection<Capability>> result = repo
@@ -144,7 +147,7 @@ public class OSGiRepositoryXMLTest extends TestCase {
         repoAdmin.addRepository(url);
 
         Repository repo = new OSGiRepositoryImpl(repoAdmin);
-        Requirement req = new OSGiRequirementImpl("foo", "(bar=toast)");
+        Requirement req = new RequirementImpl(Mockito.mock(Resource.class),"foo", "(bar=toast)");
 
         Map<Requirement, Collection<Capability>> result = repo
                 .findProviders(Collections.singleton(req));
