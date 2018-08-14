@@ -1,8 +1,15 @@
+Changes in 2.1.6
+----------------
+** Bug
+    * [FELIX-5902] - java.lang.IllegalArgumentException: Bundle org.apache.felix.scr is not resolved with R7 LogService
+    * [FELIX-5904] - SCR is creating a logger instance using name "null"
+
+
 Changes in 2.1.2
 ----------------
 ** Bug
     * [FELIX-5866] - SCR does not respect the log level set in LoggerAdmin
-    * [FELIX-5865] - SCR r7 logging support doesn't work on equinox framework
+    * [FELIX-5865] - SCR R7 logging support doesn't work on equinox framework
     * [FELIX-5867] - Reference field of type Logger for service LoggerFactory is always null
     * [FELIX-5885] - SCR uses an overly restrictive import range for promises
 

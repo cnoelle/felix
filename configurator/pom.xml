@@ -29,11 +29,11 @@
     <artifactId>org.apache.felix.configurator</artifactId>
     <packaging>bundle</packaging>
 
-    <name>Apache Felix Configurer Service</name>
+    <name>Apache Felix Configurator Service</name>
     <description>
         Implementation of the OSGi Configurator Service Specification 1.0
     </description>
-    <version>1.0.1-SNAPSHOT</version>
+    <version>1.0.5-SNAPSHOT</version>
 
     <scm>
         <connection>scm:svn:http://svn.apache.org/repos/asf/felix/trunk/configurator</connection>

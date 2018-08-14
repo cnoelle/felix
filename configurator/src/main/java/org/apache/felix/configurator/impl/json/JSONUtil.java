@@ -31,13 +31,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Dictionary;
 import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Hashtable;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import javax.json.Json;
 import javax.json.JsonArray;
 import javax.json.JsonArrayBuilder;
 import javax.json.JsonNumber;
@@ -201,7 +199,7 @@ public class JSONUtil {
                 int ranking = 0;
                 ConfigPolicy policy = ConfigPolicy.DEFAULT;
 
-                final Dictionary<String, Object> properties = new Hashtable<>();
+                final Dictionary<String, Object> properties = new OrderedDictionary();
                 boolean valid = true;
                 for(final String mapKey : mainMap.keySet()) {
                     final Object value = mainMap.get(mapKey);
@@ -266,7 +264,7 @@ public class JSONUtil {
         if ( value instanceof List ) {
             @SuppressWarnings("unchecked")
             final List<Object> list = (List<Object>)value;
-            final JsonArrayBuilder builder = Json.createArrayBuilder();
+            final JsonArrayBuilder builder = new JsonProviderImpl().createArrayBuilder();
             for(final Object obj : list) {
                 if ( obj instanceof String ) {
                     builder.add(obj.toString());
@@ -287,7 +285,7 @@ public class JSONUtil {
         } else if ( value instanceof Map ) {
             @SuppressWarnings("unchecked")
             final Map<String, Object> map = (Map<String, Object>)value;
-            final JsonObjectBuilder builder = Json.createObjectBuilder();
+            final JsonObjectBuilder builder = new JsonProviderImpl().createObjectBuilder();
             for(final Map.Entry<String, Object> entry : map.entrySet()) {
                 if ( entry.getValue() instanceof String ) {
                     builder.add(entry.getKey(), entry.getValue().toString());
@@ -375,7 +373,7 @@ public class JSONUtil {
                          }
                          return array;
              // type OBJECT -> return map
-             case OBJECT : final Map<String, Object> map = new HashMap<>();
+             case OBJECT : final Map<String, Object> map = new LinkedHashMap<>();
                            final JsonObject obj = (JsonObject)value;
                            for(final Map.Entry<String, JsonValue> entry : obj.entrySet()) {
                                map.put(entry.getKey(), getValue(entry.getValue()));
