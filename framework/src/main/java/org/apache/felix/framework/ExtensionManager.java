@@ -954,6 +954,11 @@ class ExtensionManager implements Content
             syspkgs = ((pkgextra == null) || (pkgextra.trim().length() == 0))
                 ? syspkgs : syspkgs + (pkgextra.trim().startsWith(",") ? pkgextra : "," + pkgextra);
 
+            if (syspkgs.startsWith(","))
+            {
+                syspkgs = syspkgs.substring(1);
+            }
+            
             m_headerMap.put(FelixConstants.EXPORT_PACKAGE, syspkgs);
 
             // The system bundle alsp provides framework generic capabilities
