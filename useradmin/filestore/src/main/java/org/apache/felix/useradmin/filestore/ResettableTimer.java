@@ -30,7 +30,7 @@ final class ResettableTimer {
     private final Runnable m_task;
     private final long m_timeout;
     private final TimeUnit m_timeUnit;
-    private final AtomicReference m_futureRef;
+    private final AtomicReference<ScheduledFuture<?>> m_futureRef;
     
     /**
      * Creates a new {@link ResettableTimer} calling a given task when a given 
@@ -72,7 +72,7 @@ final class ResettableTimer {
         m_timeout = timeout;
         m_timeUnit = unit;
         
-        m_futureRef = new AtomicReference();
+        m_futureRef = new AtomicReference<>();
     }
 
     /**
@@ -89,9 +89,9 @@ final class ResettableTimer {
      * is already pending or running, it will be cancelled (not interrupted). 
      * The new task will be scheduled to run in now + timeout.
      */
-    public ScheduledFuture schedule() {
-        ScheduledFuture currentTask = cancelCurrentTask();
-        ScheduledFuture newTask = m_executor.schedule(m_task, m_timeout, m_timeUnit);
+    public ScheduledFuture<?> schedule() {
+        ScheduledFuture<?> currentTask = cancelCurrentTask();
+        ScheduledFuture<?> newTask = m_executor.schedule(m_task, m_timeout, m_timeUnit);
         m_futureRef.compareAndSet(currentTask, newTask);
         return newTask;
     }
@@ -112,8 +112,8 @@ final class ResettableTimer {
     /**
      * @return the current task, or <code>null</code> if no task is available.
      */
-    private ScheduledFuture cancelCurrentTask() {
-        ScheduledFuture currentTask = (ScheduledFuture) m_futureRef.get();
+    private ScheduledFuture<?> cancelCurrentTask() {
+        ScheduledFuture<?> currentTask = m_futureRef.get();
         if (currentTask != null) {
             // Doesn't matter for completed tasks...
             currentTask.cancel(false /* mayInterruptIfRunning */);

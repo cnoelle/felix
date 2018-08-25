@@ -17,52 +17,126 @@
 
 package org.apache.felix.useradmin.impl;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
-import org.osgi.framework.Bundle;
+import org.apache.felix.useradmin.EventDispatcher;
+import org.apache.felix.useradmin.RoleRepositoryStore;
 import org.osgi.framework.FrameworkUtil;
 import org.osgi.framework.InvalidSyntaxException;
-import org.osgi.framework.ServiceFactory;
 import org.osgi.framework.ServiceReference;
-import org.osgi.framework.ServiceRegistration;
+import org.osgi.service.component.ComponentContext;
+import org.osgi.service.component.ComponentException;
+import org.osgi.service.component.ComponentServiceObjects;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
+import org.osgi.service.component.annotations.ReferenceCardinality;
+import org.osgi.service.component.annotations.ReferencePolicy;
+import org.osgi.service.component.annotations.ReferencePolicyOption;
 import org.osgi.service.useradmin.Authorization;
 import org.osgi.service.useradmin.Role;
 import org.osgi.service.useradmin.User;
 import org.osgi.service.useradmin.UserAdmin;
 import org.osgi.service.useradmin.UserAdminEvent;
+import org.osgi.service.useradmin.UserAdminListener;
 
 /**
  * Provides the implementation for {@link UserAdmin}.
  */
-public class UserAdminImpl implements ServiceFactory, UserAdmin, RoleChangeListener {
+// TODO configuration?
+@Component(service=UserAdmin.class)
+public class UserAdminImpl implements UserAdmin, RoleChangeListener 
+//		,ServiceFactory 
+						{
+	@Reference
+	private RoleRepositoryStore m_roleRepositoryStore;
+	
+	private final Set<EventDispatcher> m_dispatchers = 
+				Collections.newSetFromMap(new ConcurrentHashMap<EventDispatcher,Boolean>());
+	
+	// using this mechanism in order to avoid mandatory EventAdmin imports
+	@Reference(
+			service=EventDispatcher.class,
+			cardinality=ReferenceCardinality.MULTIPLE,
+			policy=ReferencePolicy.DYNAMIC,
+			policyOption=ReferencePolicyOption.GREEDY,
+			bind="setDispatcher",
+			unbind="removeDispatcher"
+	)
+	protected void setDispatcher(EventDispatcher eventAdmin) {
+		m_dispatchers.add(eventAdmin);
+	}
+	
+	protected void removeDispatcher(EventDispatcher eventAdmin) {
+		m_dispatchers.remove(eventAdmin);
+	}
+	
+	@Reference(
+			service=UserAdminListener.class,
+			policy=ReferencePolicy.DYNAMIC,
+			cardinality=ReferenceCardinality.MULTIPLE,
+			bind="addUserAdminListener",
+			unbind="removeUserAdminListener"
+	)
+	protected void addUserAdminListener(ComponentServiceObjects<UserAdminListener> listener) {
+		m_listenerDispatch.addListener(listener);
+	}
+	
+	protected void removeUserAdminListener(ComponentServiceObjects<UserAdminListener> listener) {
+		m_listenerDispatch.removeListener(listener);
+	}
+	
+	// LogService: optional dependency
+	private final AtomicReference<ComponentServiceObjects<?>> loggerRef = new AtomicReference<ComponentServiceObjects<?>>(null);
+	
+	@Reference(
+			service=org.osgi.service.log.LogService.class,
+			policy=ReferencePolicy.DYNAMIC,
+			policyOption=ReferencePolicyOption.GREEDY,
+			cardinality=ReferenceCardinality.OPTIONAL,
+			bind="addLogger",
+			unbind="removeLogger"
+	)
+	protected void addLogger(ComponentServiceObjects<?> logger) {
+		loggerRef.set(logger);
+	}
+	
+	protected void removeLogger(ComponentServiceObjects<?> logger) {
+		loggerRef.compareAndSet(logger, null);
+	}
+	
+	private final ListenerDispatch m_listenerDispatch = new ListenerDispatch(loggerRef); 
+    private EventDispatcherImpl m_eventDispatcher;
+    private ServiceReference<UserAdmin> m_serviceRef;
+    private RoleRepository m_roleRepository;
     
-    private final RoleRepository m_roleRepository;
-    private final EventDispatcher m_eventDispatcher;
-
-    private volatile ServiceReference m_serviceRef;
-    
-    /**
-     * Creates a new {@link UserAdminImpl} implementation.
-     * 
-     * @param roleRepository the repository with roles to use for this service;
-     * @param eventDispatcher the event dispatcher to use for this service.
-     * 
-     * @throws IllegalArgumentException in case one of the given parameters was <code>null</code>.
-     */
-    public UserAdminImpl(RoleRepository roleRepository, EventDispatcher eventDispatcher) {
-        if (roleRepository == null) {
-            throw new IllegalArgumentException("RoleRepository cannot be null!");
-        }
-        if (eventDispatcher == null) {
-            throw new IllegalArgumentException("EventDispatcher cannot be null!");
-        }
-
-        m_roleRepository = roleRepository;
-        m_eventDispatcher = eventDispatcher;
-
-        m_roleRepository.addRoleChangeListener(this);
+    {
+    	m_dispatchers.add(m_listenerDispatch);
     }
-
+    
+    @SuppressWarnings("unchecked")
+	@Activate
+    protected void activate(ComponentContext ctx) {
+    	m_serviceRef = (ServiceReference<UserAdmin>) ctx.getServiceReference();
+    	if (m_serviceRef == null)
+    		throw new ComponentException("Service reference is null");
+    	
+    	m_eventDispatcher = new EventDispatcherImpl(m_dispatchers);
+    	m_roleRepository = new RoleRepository(m_roleRepositoryStore);
+    	m_roleRepository.addRoleChangeListener(this);
+    }
+    
+    @Deactivate
+    protected void deactivate() {
+    	if (m_eventDispatcher != null)
+    		m_eventDispatcher.stop();
+    }
+    
     /**
      * {@inheritDoc}
      */
@@ -103,12 +177,14 @@ public class UserAdminImpl implements ServiceFactory, UserAdmin, RoleChangeListe
     /**
      * {@inheritDoc}
      * 
-     * <p>Overridden in order to get hold of our service reference.</p>
+     * <p>Overridden in order to get hold of our service reference -> not nice... </p>
      */
+    /*
     public Object getService(Bundle bundle, ServiceRegistration registration) {
         m_serviceRef = registration.getReference();
         return this;
     }
+    */
 
     /**
      * {@inheritDoc}
@@ -170,9 +246,11 @@ public class UserAdminImpl implements ServiceFactory, UserAdmin, RoleChangeListe
     /**
      * {@inheritDoc}
      */
+    /*
     public void ungetService(Bundle bundle, ServiceRegistration registration, Object service) {
         // Nop; we leave the service as-is...
     }
+    */
 
     /**
      * Creates a new {@link UserAdminEvent} instance for the given type and role.
@@ -184,4 +262,5 @@ public class UserAdminImpl implements ServiceFactory, UserAdmin, RoleChangeListe
     private UserAdminEvent createUserAdminEvent(int type, Role role) {
         return new UserAdminEvent(m_serviceRef, type, role);
     }
+    
 }

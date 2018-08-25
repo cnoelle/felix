@@ -21,39 +21,31 @@
 	<parent>
 		<artifactId>felix-parent</artifactId>
 		<groupId>org.apache.felix</groupId>
-        <version>2.1</version>
-        <relativePath>../../../pom/pom.xml</relativePath>
+        <version>5</version>
 	</parent>
 	<artifactId>org.apache.felix.useradmin</artifactId>
-    <version>1.0.4-SNAPSHOT</version>
+    <version>1.1.0-SNAPSHOT</version>
 	<packaging>bundle</packaging>
 	<description>Provides an implementation for the UserAdmin OSGi compendium service.</description>
 	<dependencies>
 		<dependency>
-			<groupId>org.osgi</groupId>
-			<artifactId>org.osgi.compendium</artifactId>
-			<version>4.0.0</version>
+            <groupId>org.osgi</groupId>
+			<artifactId>osgi.core</artifactId>
+			<version>6.0.0</version>
 		</dependency>
 		<dependency>
-            <groupId>org.apache.felix</groupId>
-			<artifactId>org.apache.felix.framework</artifactId>
-			<version>4.0.2</version>
+			<groupId>org.osgi</groupId>
+			<artifactId>osgi.cmpn</artifactId>
+			<version>6.0.0</version>
+		</dependency>
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>4.12</version>
 		</dependency>
 	</dependencies>
 	<build>
 		<plugins>
-            <plugin>
-                <groupId>org.apache.rat</groupId>
-                <artifactId>apache-rat-plugin</artifactId>
-                <configuration>
-                    <includes>
-                        <include>src/**</include>
-                    </includes>
-                    <excludes>
-                        <exclude>src/main/resources/**</exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
 			<plugin>
 				<groupId>org.apache.felix</groupId>
 				<artifactId>maven-bundle-plugin</artifactId>
@@ -64,9 +56,6 @@
 						<Bundle-Description>
 							An implementation of the OSGi User Admin Compendium Service
 						</Bundle-Description>
-						<Bundle-Activator>
-							${project.artifactId}.osgi.Activator
-						</Bundle-Activator>
 						<Bundle-SymbolicName>
 							${project.artifactId}
 						</Bundle-SymbolicName>
@@ -74,9 +63,11 @@
 						<Import-Package>
 							org.osgi.framework;version="[1.5,2.0)",
 						    org.osgi.service.useradmin; version="[1.1,1.2)",
-						    org.osgi.service.event; version="[1.0,2)"; resolution:=optional,
+						    org.osgi.service.event; version="[1.0,2)"; resolution:optional,
+						    org.osgi.service.log; version="[1.3,2)"; resolution:=optional,
 						    *
 						</Import-Package>
+						<!-- FIXME org.osgi.service.useradmin import and reexport? -->
 						<Export-Package>
 					        org.osgi.service.useradmin; version="1.1",
 							${project.artifactId}; version="1.0.0"
@@ -87,6 +78,31 @@
 					</instructions>
 				</configuration>
 			</plugin>
+			<plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                     <execution>
+                        <id>enforce-property-values</id>
+                        <configuration>
+                        	<skip>true</skip>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>enforce-java</id>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.rat</groupId>
+                <artifactId>apache-rat-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
 		</plugins>
 	</build>
 </project>

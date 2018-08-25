@@ -36,7 +36,7 @@ import org.osgi.service.useradmin.Role;
  */
 public class RoleRepositoryMemoryStore implements RoleRepositoryStore {
     
-    protected final ConcurrentMap m_entries = new ConcurrentHashMap();
+    protected final ConcurrentMap<String, Role> m_entries = new ConcurrentHashMap<>();
 
     public Role addRole(String roleName, int type) {
         if (roleName == null) {
@@ -47,16 +47,17 @@ public class RoleRepositoryMemoryStore implements RoleRepositoryStore {
         return (result == null) ? role : null;
     }
 
-    public Role[] getRoles(String filterValue) throws InvalidSyntaxException {
-        Collection roles = m_entries.values();
+    @SuppressWarnings("unchecked")
+	public Role[] getRoles(String filterValue) throws InvalidSyntaxException {
+        Collection<Role> roles = m_entries.values();
 
         Filter filter = null;
         if (filterValue != null) {
             filter = FrameworkUtil.createFilter(filterValue);
         }
 
-        List matchingRoles = new ArrayList();
-        Iterator rolesIter = roles.iterator();
+        List<Role> matchingRoles = new ArrayList<>();
+        Iterator<Role> rolesIter = roles.iterator();
         while (rolesIter.hasNext()) {
             Role role = (Role) rolesIter.next();
             if ((filter == null) || filter.match(role.getProperties())) {

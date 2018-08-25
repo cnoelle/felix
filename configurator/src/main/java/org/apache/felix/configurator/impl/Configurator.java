@@ -49,10 +49,10 @@ import org.osgi.framework.BundleContext;
 import org.osgi.framework.BundleEvent;
 import org.osgi.framework.Constants;
 import org.osgi.framework.InvalidSyntaxException;
-import org.osgi.framework.ServicePermission;
 import org.osgi.framework.ServiceReference;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
+import org.osgi.service.cm.ConfigurationPermission;
 import org.osgi.service.configurator.ConfiguratorConstants;
 import org.osgi.util.tracker.BundleTrackerCustomizer;
 
@@ -538,7 +538,7 @@ public class Configurator {
             if ( configBundle != null
                  && (configBundle.getState() == Bundle.STARTING || configBundle.getState() == Bundle.ACTIVE)) {
                 if ( System.getSecurityManager() == null
-                     || configBundle.hasPermission( new ServicePermission(ConfigurationAdmin.class.getName(), ServicePermission.GET)) ) {
+                     || configBundle.hasPermission( new ConfigurationPermission("?", ConfigurationPermission.CONFIGURE)) ) {
                     try {
                         final BundleContext ctx = configBundle.getBundleContext();
                         if ( ctx != null ) {

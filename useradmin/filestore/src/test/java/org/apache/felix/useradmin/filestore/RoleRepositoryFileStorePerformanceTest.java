@@ -77,7 +77,7 @@ public class RoleRepositoryFileStorePerformanceTest extends TestCase {
 
         m_store = new RoleRepositoryFileStore(new File(System.getProperty("java.io.tmpdir")), false /* disable background writes */);
 
-        m_repository = new HashMap(USER_COUNT + GROUP_COUNT + 1);
+        m_repository = new HashMap<>(USER_COUNT + GROUP_COUNT + 1);
         m_anyone = RoleFactory.createRole(Role.USER_ANYONE);
 
         addToRepository(m_anyone);

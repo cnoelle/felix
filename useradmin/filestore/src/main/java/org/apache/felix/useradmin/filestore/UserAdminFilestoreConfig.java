@@ -14,20 +14,16 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-package org.apache.felix.useradmin.impl;
+package org.apache.felix.useradmin.filestore;
 
-import org.osgi.service.useradmin.UserAdminListener;
+import org.osgi.service.metatype.annotations.ObjectClassDefinition;
 
-/**
- * Provides an abstraction for a list of {@link UserAdminListener}s.
- */
-public interface UserAdminListenerList {
+@ObjectClassDefinition
+public @interface UserAdminFilestoreConfig {
 
-    /**
-     * Returns all current listeners.
-     * 
-     * @return an array of {@link UserAdminListener}s, never <code>null</code>,
-     *         but can be an empty array.
-     */
-    UserAdminListener[] getListeners();
+	boolean backgroundWriteDisabled();// default false;
+	long writeDelayValue() default 500L;
+	String writeDelayTimeunit() default "MILLISECONDS";
+	String baseFolder(); // default: in bundle storage area
+
 }

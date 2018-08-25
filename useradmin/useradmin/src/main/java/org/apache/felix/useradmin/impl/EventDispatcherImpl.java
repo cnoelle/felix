@@ -16,50 +16,31 @@
  */
 package org.apache.felix.useradmin.impl;
 
-import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
-import org.osgi.framework.Constants;
-import org.osgi.framework.ServiceReference;
-import org.osgi.service.event.Event;
+import org.apache.felix.useradmin.EventDispatcher;
 import org.osgi.service.event.EventAdmin;
-import org.osgi.service.event.EventConstants;
-import org.osgi.service.useradmin.Role;
 import org.osgi.service.useradmin.UserAdminEvent;
-import org.osgi.service.useradmin.UserAdminListener;
 
 /**
  * Provides an event dispatcher for delivering {@link UserAdminEvent}s asynchronously. 
  */
-public final class EventDispatcher implements Runnable {
+final class EventDispatcherImpl implements Runnable {
     
-    private static final String TOPIC_BASE = "org/osgi/service/useradmin/UserAdmin/";
-
-    private final EventAdmin m_eventAdmin;
-    private final UserAdminListenerList m_listenerList;
-    private final BlockingQueue m_eventQueue;
+	private final Set<EventDispatcher> m_dispatchers;
+    private final BlockingQueue<Object> m_eventQueue;
     private final Thread m_backgroundThread;
 
     /**
-     * Creates a new {@link EventDispatcher} instance, and starts a background thread to deliver all events.
+     * Creates a new {@link EventDispatcherImpl} instance, and starts a background thread to deliver all events.
      * 
-     * @param eventAdmin the event admin to use, cannot be <code>null</code>;
-     * @param listenerList the list with {@link UserAdminListener}s, cannot be <code>null</code>.
-     * @throws IllegalArgumentException in case one of the given parameters was <code>null</code>.
+     * 
      */
-    public EventDispatcher(EventAdmin eventAdmin, UserAdminListenerList listenerList) {
-        if (eventAdmin == null) {
-            throw new IllegalArgumentException("EventAdmin cannot be null!");
-        }
-        if (listenerList == null) {
-            throw new IllegalArgumentException("ListenerList cannot be null!");
-        }
-
-        m_eventAdmin = eventAdmin;
-        m_listenerList = listenerList;
-        m_eventQueue = new LinkedBlockingQueue();
-
+    EventDispatcherImpl(Set<EventDispatcher> dispatchers) {
+    	this.m_dispatchers = dispatchers;
+        m_eventQueue = new LinkedBlockingQueue<>();
         m_backgroundThread = new Thread(this, "UserAdmin event dispatcher");
     }
 
@@ -106,11 +87,12 @@ public final class EventDispatcher implements Runnable {
         }
 
         // Add poison object to queue to let the background thread terminate...
-        m_eventQueue.add(EventDispatcher.this);
+        m_eventQueue.add(EventDispatcherImpl.this);
 
         try {
-            m_backgroundThread.join();
+            m_backgroundThread.join(2000);
         } catch (InterruptedException e) {
+        	Thread.currentThread().interrupt();
             // We're already stopping; so don't bother... 
         }
     }
@@ -149,78 +131,16 @@ public final class EventDispatcher implements Runnable {
     }
 
     /**
-     * Converts a given {@link UserAdminEvent} to a {@link Event} that can be
-     * dispatched through the {@link EventAdmin} service.
-     * 
-     * @param event
-     *            the event to convert, cannot be <code>null</code>.
-     * @return a new {@link Event} instance containing the same set of
-     *         information as the given event, never <code>null</code>.
-     */
-    private Event convertEvent(UserAdminEvent event) {
-        String topic = getTopicName(event.getType());
-        Role role = event.getRole();
-        ServiceReference serviceRef = event.getServiceReference();
-
-        Properties props = new Properties();
-        props.put(EventConstants.EVENT_TOPIC, TOPIC_BASE.concat(topic));
-        props.put(EventConstants.EVENT, event);
-        props.put("role", role);
-        props.put("role.name", role.getName());
-        props.put("role.type", new Integer(role.getType()));
-        if (serviceRef != null) {
-            props.put(EventConstants.SERVICE, serviceRef);
-            Object property;
-            
-            property = serviceRef.getProperty(Constants.SERVICE_ID);
-            if (property != null) {
-                props.put(EventConstants.SERVICE_ID, property);
-            }
-            property = serviceRef.getProperty(Constants.OBJECTCLASS);
-            if (property != null) {
-                props.put(EventConstants.SERVICE_OBJECTCLASS, property);
-            }
-            property = serviceRef.getProperty(Constants.SERVICE_PID);
-            if (property != null) {
-                props.put(EventConstants.SERVICE_PID, property);
-            }
-        }
-
-        return new Event(topic, props);
-    }
-
-    /**
      * Delivers the given event synchronously to all interested listeners.
      * 
      * @param event the event to deliver, cannot be <code>null</code>.
      */
     private void deliverEventSynchronously(UserAdminEvent event) {
-        // Asynchronously deliver an event to the EventAdmin service...
-        m_eventAdmin.postEvent(convertEvent(event));
-
-        // Synchronously call all UserAdminListeners to deliver the event...
-        UserAdminListener[] listeners = m_listenerList.getListeners();
-        for (int i = 0; i < listeners.length; i++) {
-            listeners[i].roleChanged(event);
-        }
+    	for (EventDispatcher dispatcher : m_dispatchers) {
+    		dispatcher.deliverEventSynchronously(event);
+    	}
     }
     
-    /**
-     * Converts a topic name for the given event-type.
-     * 
-     * @param type the type of event to get the topic name for.
-     * @return a topic name, never <code>null</code>.
-     */
-    private String getTopicName(int type) {
-        switch (type) {
-            case UserAdminEvent.ROLE_CREATED:
-                return "ROLE_CREATED";
-            case UserAdminEvent.ROLE_CHANGED:
-                return "ROLE_CHANGED";
-            case UserAdminEvent.ROLE_REMOVED:
-                return "ROLE_REMOVED";
-            default:
-                return null;
-        }
-    }
+
+
 }

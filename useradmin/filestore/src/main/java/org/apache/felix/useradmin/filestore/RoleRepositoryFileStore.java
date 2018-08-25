@@ -27,15 +27,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Collections;
-import java.util.Dictionary;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.felix.useradmin.RoleRepositoryStore;
-import org.osgi.service.cm.ConfigurationException;
-import org.osgi.service.cm.ManagedService;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
+import org.osgi.service.useradmin.Role;
 import org.osgi.service.useradmin.UserAdminEvent;
 import org.osgi.service.useradmin.UserAdminListener;
 
@@ -43,48 +43,43 @@ import org.osgi.service.useradmin.UserAdminListener;
 /**
  * Provides an implementation of {@link RoleRepositoryStore} using Java Serialization.
  */
-public class RoleRepositoryFileStore extends RoleRepositoryMemoryStore implements Runnable, UserAdminListener, ManagedService {
+@Component(service= {RoleRepositoryStore.class, UserAdminListener.class})
+public class RoleRepositoryFileStore extends RoleRepositoryMemoryStore implements Runnable, UserAdminListener {
 
     /** The PID for this service to allow its configuration to be updated. */
     public static final String PID = "org.apache.felix.useradmin.filestore";
+    public static final String FILE_NAME = "ua_repo.dat";
 
-    static final String KEY_WRITE_DISABLED = "background.write.disabled";
-    static final String KEY_WRITE_DELAY_VALUE = "background.write.delay.value";
-    static final String KEY_WRITE_DELAY_TIMEUNIT = "background.write.delay.timeunit";
-
-    private static final String PREFIX = PID.concat(".");
-    private static final boolean DEFAULT_WRITE_DISABLED = Boolean.parseBoolean(System.getProperty(PREFIX.concat(KEY_WRITE_DISABLED), "false"));
-    private static final int DEFAULT_WRITE_DELAY_VALUE = Integer.parseInt(System.getProperty(PREFIX.concat(KEY_WRITE_DELAY_VALUE), "500"));
-    private static final TimeUnit DEFAULT_WRITE_DELAY_TIMEUNIT = TimeUnit.MILLISECONDS;
-
-    private static final String FILE_NAME = "ua_repo.dat";
-
-    private final File m_file;
-    private final AtomicReference m_timerRef;
-
-    /**
-     * Creates a new {@link RoleRepositoryStore} instance.
-     * 
-     * @param baseDir the base directory where we can store our serialized data, cannot be <code>null</code>.
-     */
-    public RoleRepositoryFileStore(File baseDir) {
-        this(baseDir, !DEFAULT_WRITE_DISABLED);
+    private File m_file;
+    private AtomicReference<ResettableTimer> m_timerRef;
+    
+    @Reference
+    private ConfigManagement configService;
+    
+    private UserAdminConfigImpl config;
+    
+    @Activate
+    protected void activate() {
+    	this.config = configService.getConfig();
+    	this.m_file = configService.getDataFile().toFile();
+        m_timerRef = new AtomicReference<>();
+        if (!config.isBackgroundWriteDisabled()) {
+            m_timerRef.set(new ResettableTimer(this, config.getWriteDelayValue(), config.getWriteDelayTimeunit()));
+        }
     }
     
-    /**
-     * Creates a new {@link RoleRepositoryStore} instance.
-     * 
-     * @param baseDir the base directory where we can store our serialized data, cannot be <code>null</code>;
-     * @param backgroundWriteEnabled <code>true</code> if background writing should be enabled, <code>false</code> to disable it. 
+    public RoleRepositoryFileStore() {}
+    
+    /*
+     * Just for testing 
      */
-    public RoleRepositoryFileStore(File baseDir, boolean backgroundWriteEnabled) {
-        m_file = new File(baseDir, FILE_NAME);
-        
-        m_timerRef = new AtomicReference();
-
-        if (backgroundWriteEnabled) {
-            m_timerRef.set(new ResettableTimer(this, DEFAULT_WRITE_DELAY_VALUE, DEFAULT_WRITE_DELAY_TIMEUNIT));
-        }
+    RoleRepositoryFileStore(File baseDir, boolean backgroundWrite) {
+    	this.config = new UserAdminConfigImpl(!backgroundWrite, 1000, "MILLISECONDS", baseDir.toString());
+    	this.m_file = ConfigManagement.getDataFile(null, baseDir.toPath()).toFile();
+    	 m_timerRef = new AtomicReference<>();
+         if (!config.isBackgroundWriteDisabled()) {
+             m_timerRef.set(new ResettableTimer(this, config.getWriteDelayValue(), config.getWriteDelayTimeunit()));
+         }
     }
     
     public void roleChanged(UserAdminEvent event) {
@@ -134,63 +129,12 @@ public class RoleRepositoryFileStore extends RoleRepositoryMemoryStore implement
     }
 
     /**
-     * {@inheritDoc}
-     */
-    public void updated(Dictionary properties) throws ConfigurationException {
-        boolean writeDisabled = DEFAULT_WRITE_DISABLED;
-        int writeDelayValue = DEFAULT_WRITE_DELAY_VALUE;
-        TimeUnit writeDelayUnit = DEFAULT_WRITE_DELAY_TIMEUNIT;
-
-        if (properties != null) {
-            Object wd = properties.get(KEY_WRITE_DISABLED);
-            if (wd == null) {
-                throw new ConfigurationException(KEY_WRITE_DISABLED, "Missing write disabled value!");
-            }
-            try {
-                writeDisabled = Boolean.parseBoolean((String) wd);
-            } catch (Exception e) {
-                throw new ConfigurationException(KEY_WRITE_DISABLED, "Invalid write disabled value!");
-            }
-
-            if (!writeDisabled) {
-                Object wdv = properties.get(KEY_WRITE_DELAY_VALUE);
-                if (wdv == null) {
-                    throw new ConfigurationException(KEY_WRITE_DELAY_VALUE, "Missing write delay value!");
-                }
-                try {
-                    writeDelayValue = Integer.parseInt((String) wdv);
-                } catch (Exception e) {
-                    throw new ConfigurationException(KEY_WRITE_DELAY_VALUE, "Invalid write delay value!");
-                }
-                if (writeDelayValue <= 0) {
-                    throw new ConfigurationException(KEY_WRITE_DELAY_VALUE, "Invalid write delay value!");
-                }
-
-                Object wdu = properties.get(KEY_WRITE_DELAY_TIMEUNIT);
-                if (wdu != null) {
-                    try {
-                        writeDelayUnit = TimeUnit.valueOf(((String) wdu).toUpperCase());
-                    } catch (Exception e) {
-                        throw new ConfigurationException(KEY_WRITE_DELAY_TIMEUNIT, "Invalid write delay unit!");
-                    }
-                }
-            }
-        }
-
-        ResettableTimer timer = (ResettableTimer) m_timerRef.get();
-        if (timer != null) {
-            timer.shutDown();
-        }
-        m_timerRef.compareAndSet(timer, writeDisabled ? null : new ResettableTimer(this, writeDelayValue, writeDelayUnit));
-    }
-
-    /**
      * Retrieves the serialized repository from disk.
      * 
      * @return the retrieved repository, never <code>null</code>.
      * @throws IOException in case the retrieval of the repository failed.
      */
-    protected Map retrieve() throws IOException {
+    protected Map<String, Role> retrieve() throws IOException {
         InputStream is = null;
 
         try {
@@ -258,6 +202,8 @@ public class RoleRepositoryFileStore extends RoleRepositoryMemoryStore implement
         ResettableTimer timer = (ResettableTimer) m_timerRef.get();
         if (timer != null && !timer.isShutDown()) {
             timer.schedule();
+        } else {
+        	run();
         }
     }
 }

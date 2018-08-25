@@ -20,6 +20,8 @@ package org.apache.felix.cm.impl;
 
 
 import java.io.IOException;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 
 import org.osgi.framework.Bundle;
 import org.osgi.framework.InvalidSyntaxException;
@@ -43,12 +45,20 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
 
     // The bundle for which this instance has been created
     private volatile Bundle bundle;
+    private final String location;
 
 
-    ConfigurationAdminImpl( ConfigurationManager configurationManager, Bundle bundle )
+    ConfigurationAdminImpl(final ConfigurationManager configurationManager, final Bundle bundle )
     {
         this.configurationManager = configurationManager;
         this.bundle = bundle;
+        this.location = AccessController.doPrivileged(new PrivilegedAction<String>() {
+
+			@Override
+			public String run() {
+				return bundle.getLocation();
+			}
+		});
     }
 
 
@@ -80,7 +90,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
 
         // FELIX-3360: new factory configuration with implicit binding is dynamic
         ConfigurationImpl config = configurationManager.createFactoryConfiguration( factoryPid, null );
-        config.setDynamicBundleLocation( this.getBundle().getLocation(), false );
+        config.setDynamicBundleLocation( this.location, false );
         return this.wrap( config );
     }
 
@@ -122,7 +132,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
             config = configurationManager.createConfiguration( pid, null );
 
             // FELIX-3360: configuration creation with implicit binding is dynamic
-            config.setDynamicBundleLocation( getBundle().getLocation(), false );
+            config.setDynamicBundleLocation( location, false );
         }
         else
         {
@@ -131,10 +141,10 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
                 Log.logger.log( LogService.LOG_DEBUG, "Binding configuration {0} (isNew: {1}) to bundle {2}",
                         new Object[]
                                 { config.getPid(), config.isNew() ? Boolean.TRUE : Boolean.FALSE,
-                                        this.getBundle().getLocation() } );
+                                        this.location } );
 
                 // FELIX-3360: first implicit binding is dynamic
-                config.setDynamicBundleLocation( getBundle().getLocation(), true );
+                config.setDynamicBundleLocation( location, true );
             }
             else
             {
@@ -268,7 +278,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
         if ( sm != null )
         {
             // CM 1.4 / 104.11.1 Implicit permission
-            if ( name != null && ( checkOwn || !name.equals( getBundle().getLocation() ) ) )
+            if ( name != null && ( checkOwn || !name.equals( location ) ) )
             {
                 try
                 {
@@ -277,7 +287,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
                     Log.logger.log( LogService.LOG_DEBUG,
                             "Explicit Permission; grant {0} permission on configuration bound to {1} to bundle {2}",
                             new Object[]
-                                    { action, name, getBundle().getLocation() } );
+                                    { action, name, location } );
                 }
                 catch ( SecurityException se )
                 {
@@ -286,7 +296,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
                             LogService.LOG_DEBUG,
                             "No Permission; denied {0} permission on configuration bound to {1} to bundle {2}; reason: {3}",
                             new Object[]
-                                    { action, name, getBundle().getLocation(), se.getMessage() } );
+                                    { action, name, location, se.getMessage() } );
                     throw se;
                 }
             }
@@ -295,7 +305,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
                 Log.logger.log( LogService.LOG_DEBUG,
                         "Implicit Permission; grant {0} permission on configuration bound to {1} to bundle {2}",
                         new Object[]
-                                { action, name, getBundle().getLocation() } );
+                                { action, name, location } );
 
             }
         }
@@ -304,7 +314,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
             Log.logger.log( LogService.LOG_DEBUG,
                     "No SecurityManager installed; grant {0} permission on configuration bound to {1} to bundle {2}",
                     new Object[]
-                            { action, name, getBundle().getLocation() } );
+                            { action, name, location } );
         }
     }
 
@@ -378,7 +388,7 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
             config = configurationManager.createFactoryConfiguration( pid, factoryPid, null );
 
             // FELIX-3360: configuration creation with implicit binding is dynamic
-            config.setDynamicBundleLocation( getBundle().getLocation(), false );
+            config.setDynamicBundleLocation( location, false );
         }
         else
         {
@@ -387,10 +397,10 @@ public class ConfigurationAdminImpl implements ConfigurationAdmin
                 Log.logger.log( LogService.LOG_DEBUG, "Binding configuration {0} (isNew: {1}) to bundle {2}",
                         new Object[]
                                 { config.getPid(), config.isNew() ? Boolean.TRUE : Boolean.FALSE,
-                                        this.getBundle().getLocation() } );
+                                        this.location } );
 
                 // FELIX-3360: first implicit binding is dynamic
-                config.setDynamicBundleLocation( getBundle().getLocation(), true );
+                config.setDynamicBundleLocation( location, true );
             }
             else
             {
