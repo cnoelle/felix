@@ -517,23 +517,25 @@ class ExtensionManager implements Content
             m_unresolvedExtensions.remove(revision);
             m_resolvedExtensions.add(revision);
 
-            BundleWire wire = new BundleWireImpl(revision,
-                revision.getDeclaredRequirements(BundleRevision.HOST_NAMESPACE).get(0),
-                m_systemBundleRevision,  m_systemBundleRevision.getWiring().getCapabilities(BundleRevision.HOST_NAMESPACE).get(0));
-
-            try
-            {
-                revision.resolve(new BundleWiringImpl(m_logger, m_systemBundleRevision.m_configMap, null, revision, null,
-                    Collections.singletonList(wire), Collections.EMPTY_MAP, Collections.EMPTY_MAP));
+            final List<BundleRequirement> requirements = revision.getDeclaredRequirements(BundleRevision.HOST_NAMESPACE);
+            if (!requirements.isEmpty()) {
+	            BundleWire wire = new BundleWireImpl(revision,
+	                revision.getDeclaredRequirements(BundleRevision.HOST_NAMESPACE).get(0),
+	                m_systemBundleRevision,  m_systemBundleRevision.getWiring().getCapabilities(BundleRevision.HOST_NAMESPACE).get(0));
+	
+	            try
+	            {
+	                revision.resolve(new BundleWiringImpl(m_logger, m_systemBundleRevision.m_configMap, null, revision, null,
+	                    Collections.singletonList(wire), Collections.EMPTY_MAP, Collections.EMPTY_MAP));
+	            }
+	            catch (Exception ex)
+	            {
+	                m_logger.log(revision.getBundle(), Logger.LOG_ERROR,
+	                        "Error resolving extension bundle : " + revision.getBundle(), ex);
+	            }
+	
+	            felix.getDependencies().addDependent(wire);
             }
-            catch (Exception ex)
-            {
-                m_logger.log(revision.getBundle(), Logger.LOG_ERROR,
-                        "Error resolving extension bundle : " + revision.getBundle(), ex);
-            }
-
-            felix.getDependencies().addDependent(wire);
-
             List<BundleCapability> caps = new ArrayList<BundleCapability>();
             for (BundleCapability cap : entry.getKey().getDeclaredCapabilities(null))
             {
